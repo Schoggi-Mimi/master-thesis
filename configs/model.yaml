@@ -1,0 +1,25 @@
+# Model configuration
+
+# SIIM-ISIC model settings
+siim_model:
+  architecture: "efficientnet-b0"  # or resnet50, densenet121, etc.
+  num_classes: 7
+  pretrained: true
+  input_size: 224
+  
+# Inference settings
+inference:
+  batch_size: 16
+  num_workers: 4
+  device: "cuda"  # or "cpu"
+  
+# CAM settings
+cam:
+  method: "gradcam"  # gradcam, gradcam++, scorecam, etc.
+  target_layer: "layer4"  # target layer for CAM generation
+  
+# Finer-CAM specific settings
+finer_cam:
+  use_finer: true
+  refinement_steps: 10
+  smoothing_sigma: 2.0

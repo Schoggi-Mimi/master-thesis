@@ -343,6 +343,22 @@ paket-files/
 **/__pycache__/
 *.pyc
 
+# Research project specific
+data/
+external/
+outputs/
+checkpoints/
+results/
+*.pth
+*.pt
+*.ckpt
+*.h5
+*.pkl
+*.pickle
+.ipynb_checkpoints/
+wandb/
+mlruns/
+
 # Cake - Uncomment if you are using it
 #tools/**
 #!tools/packages.config
