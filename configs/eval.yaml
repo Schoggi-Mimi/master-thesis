@@ -1,0 +1,27 @@
+# Evaluation configuration
+
+# Confidence drop evaluation
+confidence_drop:
+  perturbation_steps: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+  mask_value: 0  # value to use for masked regions (0 for black, mean for mean)
+  
+# Deletion evaluation
+deletion:
+  num_steps: 100
+  deletion_mode: "top"  # "top" (remove most important) or "random"
+  
+# Differential CAM settings
+differential:
+  mode: "top2"  # "top2" (top-2 classes) or "class_vs_class"
+  class_pairs:
+    # For class_vs_class mode, define specific pairs to compare
+    - ["MEL", "NV"]  # Melanoma vs Nevus (clinically important)
+    - ["BCC", "AKIEC"]  # Basal cell vs Actinic keratosis
+    - ["BKL", "DF"]  # Benign keratosis vs Dermatofibroma
+  
+# Visualization settings
+visualization:
+  colormap: "jet"  # jet, viridis, plasma, etc.
+  alpha: 0.5  # overlay transparency
+  save_individual: true
+  save_combined: true

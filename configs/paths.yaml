@@ -1,0 +1,40 @@
+# Path configurations for ISIC 2018 research project
+
+# Data directories (to be created manually)
+data:
+  isic2018:
+    root: "data/isic2018"
+    images: "data/isic2018/images"
+    labels: "data/isic2018/labels.csv"
+    train_split: "data/isic2018/train.csv"
+    val_split: "data/isic2018/val.csv"
+    test_split: "data/isic2018/test.csv"
+    
+# External model directories (to be created manually)
+external:
+  siim:
+    root: "external/siim"
+    model_path: "external/siim/model.pth"
+    config: "external/siim/config.yaml"
+  finer_cam:
+    root: "external/finer_cam"
+    repo_path: "external/finer_cam"
+    
+# Output directories
+outputs:
+  root: "outputs"
+  heatmaps: "outputs/heatmaps"
+  overlays: "outputs/overlays"
+  differential_cams: "outputs/differential_cams"
+  eval_results: "outputs/eval_results"
+  checkpoints: "checkpoints"
+  
+# ISIC 2018 class names
+classes:
+  - MEL  # Melanoma
+  - NV   # Melanocytic nevus
+  - BCC  # Basal cell carcinoma
+  - AKIEC  # Actinic keratosis / Intraepithelial carcinoma
+  - BKL  # Benign keratosis
+  - DF   # Dermatofibroma
+  - VASC # Vascular lesion
