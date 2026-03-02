@@ -29,7 +29,7 @@ import torch
 import torchvision.transforms as T
 from PIL import Image
 
-from src.cam.diff_cam import compute_gradcam_triplet
+from src.cam.diff_cam import compute_cam_triplet
 from src.models.isic7_loader import load_isic7_effnetb4
 # load_siim_efficientnet will be replaced by your own load_isic_model later
 from src.models.siim_loader import load_siim_efficientnet
@@ -45,7 +45,7 @@ def parse_args():
     p.add_argument("--image_size", type=int, default=None, help="Resize to (image_size, image_size). If omitted, uses model default.")
     p.add_argument("--num_samples", type=int, default=10, help="How many images to process (from top of CSV).")
     p.add_argument("--device", type=str, default=None, help="cpu or mps (default: auto).")
-    p.add_argument("--method", type=str, default="gradcam", choices=["gradcam", "layercam"],
+    p.add_argument("--method", type=str, default="gradcam", choices=["gradcam", "layercam", "finercam"],
                    help="CAM backend for the main triplet.")
     p.add_argument("--save_layercam_diff", action="store_true",
                    help="Additionally save a LayerCAM diff map (often sharper).")
@@ -85,7 +85,7 @@ def main():
     if args.model_type == "siim9":
         model, info = load_siim_efficientnet(
             checkpoint_path=ckpt_path,
-            enet_type="tf_efficientnet_b4.ns_jft_in1k",  # "tf_efficientnet_b4_ns" is deprecated
+            enet_type="tf_efficientnet_b4.ns_jft_in1k", # "tf_efficientnet_b4_ns" is deprecated
             device=device,
         )
         target_layer = model.conv_head
@@ -159,7 +159,7 @@ def main():
             B_idx = class_to_idx[args.B]
 
         # Compute CAM triplet (top2 or fixed)
-        res = compute_gradcam_triplet(
+        res = compute_cam_triplet(
             model=model,
             input_tensor=x,
             rgb_float=rgb_resized,
@@ -210,7 +210,8 @@ def main():
         meta = {
             "image_id": str(image_id),
             "img_path": str(img_path),
-            "checkpoint": getattr(info, "checkpoint_name", ckpt_path.name),
+            # "checkpoint": getattr(info, "checkpoint_name", ckpt_path.name),
+            "checkpoint": ckpt_path.name,
             "model_type": args.model_type,
             "image_size": args.image_size,
             "device": device,

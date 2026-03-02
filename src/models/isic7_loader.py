@@ -8,20 +8,19 @@ from typing import Dict, Tuple
 import torch
 from efficientnet_pytorch import EfficientNet
 
-
-@dataclass
-class Isic7ModelInfo:
-    arch: str
-    num_classes: int
-    checkpoint_name: str
-    class_to_idx: Dict[str, int]
-    idx_to_class: Dict[int, str]
+# @dataclass
+# class Isic7ModelInfo:
+#     arch: str
+#     num_classes: int
+#     checkpoint_name: str
+#     class_to_idx: Dict[str, int]
+#     idx_to_class: Dict[int, str]
 
 
 def load_isic7_effnetb4(
     checkpoint_path: str | Path,
     device: str | torch.device | None = None,
-) -> Tuple[torch.nn.Module, Isic7ModelInfo]:
+) -> Tuple[torch.nn.Module, Dict]:
     """
     Load a 7-class EfficientNet-B4 checkpoint from jamus0702/skin-disease-classification.
 
@@ -57,9 +56,10 @@ def load_isic7_effnetb4(
     # Load weights
     state = torch.load(checkpoint_path, map_location="cpu")
     if isinstance(state, dict) and "state_dict" in state:
-        state = state["state_dict"]
+        state = state["state_dict"] # extracts only the weights, ignoring optimizer state and other metadata
 
     # Sometimes checkpoints have a "module." prefix; handle it safely
+    # If training used torch.nn.DataParallel or torch.nn.parallel.DistributedDataParallel, the state dict keys are prefixed with "module.".
     if isinstance(state, dict):
         cleaned = {}
         for k, v in state.items():
@@ -68,23 +68,30 @@ def load_isic7_effnetb4(
             cleaned[k] = v
         state = cleaned
 
-    missing, unexpected = model.load_state_dict(state, strict=False)
+    missing, unexpected = model.load_state_dict(state, strict=False) # if require perfect match, set strict=True
     # Typically should be 0/0; if not, print helpful info
     if len(missing) or len(unexpected):
         print(f"[warn] load_state_dict mismatch: missing={len(missing)}, unexpected={len(unexpected)}")
-        if missing:
+        if missing: # parameters that exist in model but do NOT exist in state
             print("  missing sample:", missing[:10])
-        if unexpected:
+        if unexpected: # parameters that exist in state but do NOT exist in model
             print("  unexpected sample:", unexpected[:10])
 
     model.eval()
     model = model.to(device)
 
-    info = Isic7ModelInfo(
-        arch="efficientnet-b4",
-        num_classes=7,
-        checkpoint_name=checkpoint_path.name,
-        class_to_idx=class_to_idx,
-        idx_to_class=idx_to_class,
-    )
+    # info = Isic7ModelInfo(
+    #     arch="efficientnet-b4",
+    #     num_classes=7,
+    #     checkpoint_name=checkpoint_path.name,
+    #     class_to_idx=class_to_idx,
+    #     idx_to_class=idx_to_class,
+    # )
+    info = {
+        "arch": "efficientnet-b4",
+        "num_classes": 7,
+        "checkpoint_name": checkpoint_path.name,
+        "class_to_idx": class_to_idx,
+        "idx_to_class": idx_to_class,
+        }
     return model, info
