@@ -1,0 +1,1 @@
+"""Cam module initialization"""

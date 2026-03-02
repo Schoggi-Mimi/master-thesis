@@ -349,6 +349,7 @@ external/
 outputs/
 checkpoints/
 results/
+scripts/_archive/
 *.pth
 *.pt
 *.ckpt
@@ -432,3 +433,5 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+.DS_Store
