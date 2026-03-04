@@ -47,8 +47,6 @@ def parse_args():
     p.add_argument("--device", type=str, default=None, help="cpu or mps (default: auto).")
     p.add_argument("--method", type=str, default="gradcam", choices=["gradcam", "layercam", "finercam"],
                    help="CAM backend for the main triplet.")
-    p.add_argument("--save_layercam_diff", action="store_true",
-                   help="Additionally save a LayerCAM diff map (often sharper).")
     p.add_argument("--compare_mode", type=str, default="top2", choices=["top2", "fixed"],
                    help="How to choose classes A and B. top2 = predicted top1/top2, fixed = user-defined A/B.")
     p.add_argument("--A", type=str, default=None,
@@ -104,7 +102,7 @@ def main():
     # Class name mapping (used for printing and fixed MEL vs NV)
     # For https://huggingface.co/jamus0702/skin-disease-classification, the checkpoint uses: AK, BCC, BKL, DF, MEL, NV, VASC
     # ISIC2018 uses AKIEC instead of AK; here we treat AKIEC as AK for convenience.
-    class_to_idx = {
+    class_to_idx = { # return mapping form 'info' dict if available
         "AK": 0, "AKIEC": 0,
         "BCC": 1,
         "BKL": 2,
@@ -170,41 +168,20 @@ def main():
         )
 
         # Named top-3
-        top3_idx = np.argsort(res.probs)[-3:][::-1]
-        top3_named = ", ".join([f"{idx_to_class[i]}: {res.probs[i]:.3f}" for i in top3_idx])
+        top3_idx = np.argsort(res["probs"])[-3:][::-1]
+        top3_named = ", ".join([f"{idx_to_class[i]}: {res['probs'][i]:.3f}" for i in top3_idx])
 
         # Print what was used
-        A_name = idx_to_class.get(int(res.A), str(res.A))
-        B_name = idx_to_class.get(int(res.B), str(res.B))
-        print(f"[info] {image_id}: A={res.A}({A_name})  B={res.B}({B_name})  top3=[{top3_named}]")
+        A_name = idx_to_class.get(int(res["A"]), str(res["A"]))
+        B_name = idx_to_class.get(int(res["B"]), str(res["B"]))
+        print(f"[info] {image_id}: A={res['A']}({A_name})  B={res['B']}({B_name})  top3=[{top3_named}]")
 
         # Build 3-panel image
-        panel = np.hstack([res.overlay_A, res.overlay_B, res.overlay_diff])
+        panel = np.hstack([res["overlay_A"], res["overlay_B"], res["overlay_diff"]])
         panel_img = Image.fromarray(panel)
 
         panel_path = out_dir / f"{image_id}_A_B_DIFF_{args.method}.png"
         panel_img.save(panel_path)
-
-        # Optional: save LayerCAM diff map
-        layercam_path = None
-        if args.save_layercam_diff:
-            # Use a more fine-grained layer
-            from pytorch_grad_cam import LayerCAM
-            from pytorch_grad_cam.utils.image import show_cam_on_image
-
-            from src.cam.diff_cam import LogitDiffTarget
-
-            if args.model_type == "siim9":
-                layer_for_layercam = model.blocks[-1][-1].conv_pwl
-            else:
-                # efficientnet_pytorch
-                layer_for_layercam = model._conv_head
-
-            cam_layer = LayerCAM(model=model, target_layers=[layer_for_layercam])
-            cam_diff = cam_layer(input_tensor=x, targets=[LogitDiffTarget(res.A, res.B)])[0]
-            vis_diff = show_cam_on_image(rgb_resized, cam_diff, use_rgb=True)
-            layercam_path = out_dir / f"{image_id}_DIFF_{args.model_type}_layercam.png"
-            Image.fromarray(vis_diff).save(layercam_path)
 
         # Save metadata
         meta = {
@@ -215,18 +192,17 @@ def main():
             "model_type": args.model_type,
             "image_size": args.image_size,
             "device": device,
-            "A_idx": int(res.A),
-            "B_idx": int(res.B),
-            "probs_top3": res.probs_top3,
+            "A_idx": int(res["A"]),
+            "B_idx": int(res["B"]),
+            "probs_top3": res["probs_top3"],
             "method": args.method,
             "panel_path": str(panel_path),
-            "layercam_diff_path": str(layercam_path) if layercam_path else None,
             "compare_mode": args.compare_mode,
             "A_name": A_name,
             "B_name": B_name,
         }
         (out_dir / f"{image_id}_meta.json").write_text(json.dumps(meta, indent=2))
-        print(f"[ok] {image_id} -> A={res.A}, B={res.B}, saved: {panel_path.name}")
+        print(f"[ok] {image_id} -> A={res['A']}, B={res['B']}, saved: {panel_path.name}")
 
     print(f"Done. Outputs in: {out_dir}")
 

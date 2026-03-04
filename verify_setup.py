@@ -1,97 +1,91 @@
 """
-Quick verification script to check repository structure.
-Run this after setup to ensure everything is in place.
+Quick verification script to check repo structure + key imports.
+
+Run:
+  python verify_setup.py
 """
+
+from __future__ import annotations
 
 import os
 import sys
 
 
-def check_file(path, description):
-    """Check if a file exists."""
+def check_file(path: str, description: str) -> bool:
     exists = os.path.exists(path)
     status = "✓" if exists else "✗"
     print(f"{status} {description}: {path}")
     return exists
 
 
-def check_directory(path, description):
-    """Check if a directory exists."""
+def check_directory(path: str, description: str) -> bool:
     exists = os.path.isdir(path)
     status = "✓" if exists else "✗"
     print(f"{status} {description}: {path}")
     return exists
 
 
-def main():
-    print("="*80)
-    print("Repository Structure Verification")
-    print("="*80)
+def check_import(module: str, description: str) -> bool:
+    try:
+        __import__(module)
+        print(f"✓ Import OK: {description} ({module})")
+        return True
+    except Exception as e:
+        print(f"✗ Import FAIL: {description} ({module}) -> {type(e).__name__}: {e}")
+        return False
+
+
+def main() -> None:
+    print("=" * 80)
+    print("Repository Verification (Current Pipeline)")
+    print("=" * 80)
     print()
-    
-    all_checks = []
-    
-    # Check config files
-    print("Configuration Files:")
-    all_checks.append(check_file("configs/paths.yaml", "Paths config"))
-    all_checks.append(check_file("configs/model.yaml", "Model config"))
-    all_checks.append(check_file("configs/eval.yaml", "Eval config"))
-    print()
-    
-    # Check source files
-    print("Source Code:")
-    all_checks.append(check_file("src/data/isic_dataset.py", "ISIC dataloader"))
-    all_checks.append(check_file("src/models/siim_inference.py", "SIIM model wrapper"))
-    all_checks.append(check_file("src/eval/cam_metrics.py", "CAM metrics"))
-    all_checks.append(check_file("src/utils/config.py", "Config utilities"))
-    all_checks.append(check_file("src/utils/visualization.py", "Visualization utils"))
-    print()
-    
-    # Check scripts
+
+    checks = []
+
+    # Core scripts
     print("Scripts:")
-    all_checks.append(check_file("scripts/run_inference.py", "Inference script"))
-    all_checks.append(check_file("scripts/generate_finer_cam.py", "Finer-CAM script"))
-    all_checks.append(check_file("scripts/generate_differential_cam.py", "Differential CAM script"))
-    all_checks.append(check_file("scripts/evaluate_cams.py", "Evaluation script"))
+    checks.append(check_file("scripts/generate_finer_cam.py", "CAM generation script"))
+    checks.append(check_file("scripts/make_subsets.py", "Subset creation script"))
     print()
-    
-    # Check directories (created by setup)
-    print("Directories (created by setup):")
-    all_checks.append(check_directory("outputs/heatmaps", "Heatmaps output"))
-    all_checks.append(check_directory("outputs/overlays", "Overlays output"))
-    all_checks.append(check_directory("outputs/differential_cams", "Differential CAMs output"))
-    all_checks.append(check_directory("outputs/eval_results", "Eval results output"))
+
+    # Core src modules
+    print("Core source files:")
+    checks.append(check_file("src/models/isic7_loader.py", "ISIC7 EfficientNet loader"))
+    checks.append(check_file("src/cam/diff_cam.py", "CAM logic (diff targets)"))
     print()
-    
-    # Check directories (manual setup required)
-    print("Directories (manual setup - see README):")
-    check_directory("data/isic2018", "ISIC 2018 data directory")
-    check_directory("external/siim", "SIIM model directory")
-    check_directory("external/finer_cam", "Finer-CAM directory (optional)")
+
+    # Expected data folders (may be empty depending on setup)
+    print("Data / output folders (existence only):")
+    checks.append(check_directory("data/isic2018", "ISIC2018 data root"))
+    checks.append(check_directory("data/isic2018/subsets", "Subset CSV folder"))
+    checks.append(check_directory("external/weights", "Checkpoint folder"))
+    checks.append(check_directory("outputs", "Outputs folder"))
     print()
-    
-    # Check other files
-    print("Other Files:")
-    all_checks.append(check_file("requirements.txt", "Requirements file"))
-    all_checks.append(check_file("README.md", "README"))
-    all_checks.append(check_file("setup.sh", "Setup script"))
+
+    # Optional but helpful files
+    print("Optional files:")
+    check_file("data/isic2018/val_gt.csv", "Validation GT CSV (val_gt.csv)")
+    check_file("external/weights/isic7_last_effnetb4.pth", "ISIC7 checkpoint")
     print()
-    
-    # Summary
-    print("="*80)
-    total = len(all_checks)
-    passed = sum(all_checks)
-    print(f"Summary: {passed}/{total} checks passed")
-    
-    if passed == total:
-        print("✓ All checks passed! Repository structure is complete.")
-        return 0
-    else:
-        print(f"✗ {total - passed} check(s) failed. Please run setup.sh or create missing items.")
-        return 1
-    
-    print("="*80)
+
+    # Imports
+    print("Python imports:")
+    checks.append(check_import("torch", "PyTorch"))
+    checks.append(check_import("torchvision", "Torchvision"))
+    checks.append(check_import("pandas", "Pandas"))
+    checks.append(check_import("numpy", "NumPy"))
+    checks.append(check_import("cv2", "OpenCV"))
+    checks.append(check_import("PIL", "Pillow"))
+    checks.append(check_import("efficientnet_pytorch", "efficientnet_pytorch"))
+    checks.append(check_import("pytorch_grad_cam", "grad-cam (pytorch-grad-cam)"))
+    print()
+
+    ok = all(checks)
+    print("=" * 80)
+    print("OK" if ok else "Some checks failed")
+    print("=" * 80)
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()

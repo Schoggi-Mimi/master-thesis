@@ -1,20 +1,11 @@
 # src/models/isic7_loader.py
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Tuple
 
 import torch
 from efficientnet_pytorch import EfficientNet
-
-# @dataclass
-# class Isic7ModelInfo:
-#     arch: str
-#     num_classes: int
-#     checkpoint_name: str
-#     class_to_idx: Dict[str, int]
-#     idx_to_class: Dict[int, str]
 
 
 def load_isic7_effnetb4(
@@ -80,13 +71,6 @@ def load_isic7_effnetb4(
     model.eval()
     model = model.to(device)
 
-    # info = Isic7ModelInfo(
-    #     arch="efficientnet-b4",
-    #     num_classes=7,
-    #     checkpoint_name=checkpoint_path.name,
-    #     class_to_idx=class_to_idx,
-    #     idx_to_class=idx_to_class,
-    # )
     info = {
         "arch": "efficientnet-b4",
         "num_classes": 7,

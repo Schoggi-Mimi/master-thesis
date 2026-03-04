@@ -1,7 +1,6 @@
 # src/cam/diff_cam.py
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
@@ -26,20 +25,6 @@ class LogitDiffTarget:
         if model_output.dim() == 1:
             return model_output[self.a] - model_output[self.b]
         return model_output[:, self.a] - model_output[:, self.b]
-
-
-@dataclass
-class CamResult:
-    A: int
-    B: int
-    probs: np.ndarray  # (C,)
-    probs_top3: list
-    cam_A: np.ndarray # (H,W)
-    cam_B: np.ndarray # (H,W)
-    cam_diff: np.ndarray # (H,W)
-    overlay_A: np.ndarray # (H,W,3) uint8
-    overlay_B: np.ndarray # (H,W,3) uint8
-    overlay_diff: np.ndarray # (H,W,3) uint8
 
 
 def pick_top2_classes(logits: torch.Tensor) -> Tuple[int, int, torch.Tensor]:
@@ -150,7 +135,7 @@ def compute_cam_triplet(
     method: str = "gradcam", # "gradcam" or "layercam" or "finercam"
     A: Optional[int] = None,
     B: Optional[int] = None,
-) -> CamResult:
+):
     """
     Computes:
       - CAM(A)
@@ -161,8 +146,10 @@ def compute_cam_triplet(
     """
     model.eval()
 
+    # First forward pass to get probabilities and pick A/B if not given.
     with torch.no_grad():
-        logits = model(input_tensor)  # (1,C)
+        # (B=1,3,H, W) -> (B=1,C=7)
+        logits = model(input_tensor)
 
     if A is None or B is None:
         A, B, probs_t = pick_top2_classes(logits)
@@ -192,15 +179,15 @@ def compute_cam_triplet(
     else:
         raise ValueError(f"Unknown method: {method}")
 
-    return CamResult(
-        A=A, 
-        B=B,
-        probs=probs,
-        probs_top3=probs_top3,
-        cam_A=cam_A, 
-        cam_B=cam_B, 
-        cam_diff=cam_diff,
-        overlay_A=vis_A, 
-        overlay_B=vis_B, 
-        overlay_diff=vis_diff
-    )
+    return {
+        "A": int(A),
+        "B": int(B),
+        "probs": probs, # np.ndarray (C,)
+        "probs_top3": probs_top3, # list
+        "cam_A": cam_A, # np.ndarray (H,W)
+        "cam_B": cam_B,
+        "cam_diff": cam_diff,
+        "overlay_A": vis_A, # np.ndarray (H,W,3) uint8
+        "overlay_B": vis_B,
+        "overlay_diff": vis_diff,
+    }
