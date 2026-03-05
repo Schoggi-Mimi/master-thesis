@@ -90,7 +90,7 @@ def _run_finercam(
 
     # Pattern 1 (most common): treat FinerCAM as a CAM method but keep our diff objective
     try:
-        print("[finercam] using Pattern 1: LogitDiffTarget(A,B)")
+        # print("[finercam] using Pattern 1: LogitDiffTarget(A,B)")
         cam_diff = finer(input_tensor=input_tensor, targets=[LogitDiffTarget(A, B)])[0]
         vis_diff = show_cam_on_image(rgb_float, cam_diff, use_rgb=True)
         return cam_A, cam_B, cam_diff, vis_A, vis_B, vis_diff

@@ -6,11 +6,10 @@
 #   --img_dir data/isic2018/images_val \
 #   --checkpoint external/weights/isic7_last_effnetb4.pth \
 #   --out_dir outputs/isic7_cam/val_mel_vs_nv \
-#   --image_size 380 \
 #   --num_samples 5 \
 #   --method gradcam \
 #   --save_layercam_diff \
-#   --compare_mode fixed \
+#   --compare_mode gt_pair \
 #   --A MEL \
 #   --B NV
 
@@ -33,6 +32,7 @@ from src.cam.diff_cam import compute_cam_triplet
 from src.models.isic7_loader import load_isic7_effnetb4
 # load_siim_efficientnet will be replaced by your own load_isic_model later
 from src.models.siim_loader import load_siim_efficientnet
+from src.utils.vis_panel import make_panel_with_subtitles
 
 
 def parse_args():
@@ -47,8 +47,14 @@ def parse_args():
     p.add_argument("--device", type=str, default=None, help="cpu or mps (default: auto).")
     p.add_argument("--method", type=str, default="gradcam", choices=["gradcam", "layercam", "finercam"],
                    help="CAM backend for the main triplet.")
-    p.add_argument("--compare_mode", type=str, default="top2", choices=["top2", "fixed"],
-                   help="How to choose classes A and B. top2 = predicted top1/top2, fixed = user-defined A/B.")
+    p.add_argument("--compare_mode", type=str, default="top2", choices=["top2", "fixed", "gt_pair"],
+        help=(
+            "How to choose classes A and B.\n"
+            "top2 = predicted top1/top2.\n"
+            "fixed = user-defined --A/--B used as A/B exactly.\n"
+            "gt_pair = use --A/--B as the pair; per image set A=gt_label and B=the other one."
+        ),
+    )
     p.add_argument("--A", type=str, default=None,
                    help="Fixed target class name (e.g., MEL). Used when compare_mode=fixed.")
     p.add_argument("--B", type=str, default=None,
@@ -156,6 +162,28 @@ def main():
             A_idx = class_to_idx[args.A]
             B_idx = class_to_idx[args.B]
 
+        elif args.compare_mode == "gt_pair":
+            # Use --A/--B as the CLOSE PAIR, but pick direction per-image using gt_label
+            if args.A is None or args.B is None:
+                raise ValueError("compare_mode=gt_pair requires --A and --B (the close pair), e.g. --A MEL --B NV")
+            if args.A not in class_to_idx or args.B not in class_to_idx:
+                raise ValueError(f"Unknown class name. Allowed: {sorted(set(class_to_idx.keys()))}")
+            if "gt_label" not in df.columns:
+                raise ValueError("compare_mode=gt_pair requires the CSV to contain a 'gt_label' column.")
+            gt = row["gt_label"]
+            if gt not in [args.A, args.B]:
+                # Not part of the requested pair → skip (or you can choose to fallback to top2)
+                print(f"[skip] {image_id}: gt_label={gt} not in pair ({args.A},{args.B})")
+                continue
+            # A = GT, B = the other class in the pair
+            if gt == args.A:
+                A_idx = class_to_idx[args.A]
+                B_idx = class_to_idx[args.B]
+            else:
+                A_idx = class_to_idx[args.B]
+                B_idx = class_to_idx[args.A]
+        # else: top2 mode keeps A_idx/B_idx = None, and diff_cam picks top2
+
         # Compute CAM triplet (top2 or fixed)
         res = compute_cam_triplet(
             model=model,
@@ -167,6 +195,11 @@ def main():
             B=B_idx,
         )
 
+        # Temporary: print CAM stats for debugging (check to if normalization is needed)
+        # print("cam_A min/max:", float(np.min(res["cam_A"])), float(np.max(res["cam_A"])))
+        # print("cam_B min/max:", float(np.min(res["cam_B"])), float(np.max(res["cam_B"])))
+        # print("cam_diff min/max:", float(np.min(res["cam_diff"])), float(np.max(res["cam_diff"])))
+
         # Named top-3
         top3_idx = np.argsort(res["probs"])[-3:][::-1]
         top3_named = ", ".join([f"{idx_to_class[i]}: {res['probs'][i]:.3f}" for i in top3_idx])
@@ -176,12 +209,29 @@ def main():
         B_name = idx_to_class.get(int(res["B"]), str(res["B"]))
         print(f"[info] {image_id}: A={res['A']}({A_name})  B={res['B']}({B_name})  top3=[{top3_named}]")
 
-        # Build 3-panel image
-        panel = np.hstack([res["overlay_A"], res["overlay_B"], res["overlay_diff"]])
-        panel_img = Image.fromarray(panel)
+        # Build panel image
+        gt_label = row["gt_label"] if "gt_label" in df.columns else None
 
-        panel_path = out_dir / f"{image_id}_A_B_DIFF_{args.method}.png"
-        panel_img.save(panel_path)
+        A_prob = float(res["probs"][int(res["A"])])
+        B_prob = float(res["probs"][int(res["B"])])
+
+        panel_img_uint8 = make_panel_with_subtitles(
+            image_id=str(image_id),
+            rgb_float=rgb_resized,
+            overlay_A=res["overlay_A"],
+            overlay_B=res["overlay_B"],
+            overlay_diff=res["overlay_diff"],
+            method=args.method,
+            A_name=A_name,
+            B_name=B_name,
+            A_prob=A_prob,
+            B_prob=B_prob,
+            gt_label=gt_label,
+            include_rgb=True,
+        )
+
+        panel_path = out_dir / f"{image_id}_RGB_A_B_DIFF_{args.method}.png"
+        Image.fromarray(panel_img_uint8).save(panel_path)
 
         # Save metadata
         meta = {
@@ -202,7 +252,7 @@ def main():
             "B_name": B_name,
         }
         (out_dir / f"{image_id}_meta.json").write_text(json.dumps(meta, indent=2))
-        print(f"[ok] {image_id} -> A={res['A']}, B={res['B']}, saved: {panel_path.name}")
+        # print(f"[ok] {image_id} -> A={res['A']}, B={res['B']}, saved: {panel_path.name}")
 
     print(f"Done. Outputs in: {out_dir}")
 
