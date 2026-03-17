@@ -195,11 +195,6 @@ def main():
             B=B_idx,
         )
 
-        # Temporary: print CAM stats for debugging (check to if normalization is needed)
-        # print("cam_A min/max:", float(np.min(res["cam_A"])), float(np.max(res["cam_A"])))
-        # print("cam_B min/max:", float(np.min(res["cam_B"])), float(np.max(res["cam_B"])))
-        # print("cam_diff min/max:", float(np.min(res["cam_diff"])), float(np.max(res["cam_diff"])))
-
         # Named top-3
         top3_idx = np.argsort(res["probs"])[-3:][::-1]
         top3_named = ", ".join([f"{idx_to_class[i]}: {res['probs'][i]:.3f}" for i in top3_idx])
