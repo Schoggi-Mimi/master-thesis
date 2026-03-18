@@ -198,7 +198,7 @@ def build_panderm_model(num_classes: int) -> nn.Module:
 
 def load_panderm_pretrained_backbone(model: nn.Module, checkpoint_path: Path) -> None:
     print(f"Loading PanDerm pretrained checkpoint from: {checkpoint_path}")
-    state_dict = torch.load(checkpoint_path, map_location="cpu")
+    state_dict = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
     missing, unexpected = model.load_state_dict(state_dict, strict=False)
 
     print("=" * 80)
