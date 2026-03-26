@@ -1,8 +1,10 @@
 #!/bin/bash
-#SBATCH --job-name=panderm
-#SBATCH --output=logs/panderm_smoke_%j.out
-#SBATCH --error=logs/panderm_smoke_%j.err
-#SBATCH --time=12:00:00
+#SBATCH --job-name=panderm_base_v4
+#SBATCH --output=logs/panderm_base_v4_%j.out
+#SBATCH --error=logs/panderm_base_v4_%j.err
+#SBATCH --time=05:00:00
+#SBATCH --mail-user=choekyel.nyungmartsang@students.unibe.ch
+#SBATCH --mail-type=END,FAIL
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
@@ -24,15 +26,21 @@ conda activate thesis
 nvidia-smi || true
 
 python train_panderm.py \
-    --split-dir ../data/processed/splits \
-    --output-dir ../outputs/panderm_base \
-    --pretrained-checkpoint ../external/weights/panderm_bb_data6_checkpoint-499.pth \
-    --image-size 224 \
-    --batch-size 16 \
-    --num-workers 2 \
-    --base-epochs 20 \
-    --ft-epochs 15 \
-    --base-lr 5e-5 \
-    --ft-lr 2e-5 \
-    --weight-decay 0.05 \
-    --label-smoothing 0.05
+  --split-dir ../data/processed/splits \
+  --output-dir ../outputs/panderm_base_v3 \
+  --pretrained-checkpoint ../external/weights/panderm_bb_data6_checkpoint-499.pth \
+  --image-size 224 \
+  --batch-size 16 \
+  --num-workers 2 \
+  --base-epochs 20 \
+  --ft-epochs 15 \
+  --base-lr 5e-5 \
+  --ft-lr 2e-5 \
+  --head-lr-mult 10 \
+  --freeze-backbone-epochs 2 \
+  --weight-decay 0.05 \
+  --label-smoothing 0.05 \
+  --selection-metric balanced_accuracy,mcc \
+  --minority-aug-labels "" \
+  --use-weighted-sampler \
+  --disable-class-weights
