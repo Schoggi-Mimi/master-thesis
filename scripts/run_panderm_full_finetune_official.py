@@ -356,3 +356,49 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+# python run_panderm_full_finetune_official.py \
+#   --panderm-classification-dir ../external/PanDerm/classification \
+#   --csv-path ../data/HAM10000/HAM10000.csv \
+#   --root-path ../data/HAM10000/images/ \
+#   --pretrained-checkpoint ../external/weights/panderm_bb_data6_checkpoint-499.pth \
+#   --output-dir ../outputs/panderm_full_finetune/ham \
+#   --model PanDerm_Base_FT \
+#   --nb-classes 7 \
+#   --batch-size 128 \
+#   --epochs 50 \
+#   --lr 5e-4 \
+#   --weight-decay 0.05 \
+#   --warmup-epochs 10 \
+#   --layer-decay 0.65 \
+#   --drop-path 0.2 \
+#   --update-freq 1 \
+#   --weights \
+#   --monitor recall \
+#   --wandb-name panderm_full_finetune_ham \
+#   --wandb-mode disabled \
+#   --device cuda
+
+
+
+# python run_panderm_full_finetune_official.py \
+#   --panderm-classification-dir ../external/PanDerm/classification \
+#   --csv-path ../data/BCN20000/bcn20000.csv \
+#   --root-path ../data/BCN20000/images/ \
+#   --pretrained-checkpoint ../external/weights/panderm_bb_data6_checkpoint-499.pth \
+#   --output-dir ../outputs/panderm_full_finetune/bcn \
+#   --model PanDerm_Base_FT \
+#   --nb-classes 9 \
+#   --batch-size 128 \
+#   --epochs 50 \
+#   --lr 5e-4 \
+#   --weight-decay 0.05 \
+#   --warmup-epochs 10 \
+#   --layer-decay 0.65 \
+#   --drop-path 0.2 \
+#   --update-freq 1 \
+#   --weights \
+#   --monitor recall \
+#   --wandb-name panderm_full_finetune_bcn \
+#   --wandb-mode disabled \
+#   --device cuda

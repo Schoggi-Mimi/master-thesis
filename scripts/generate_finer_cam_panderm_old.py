@@ -1,48 +1,14 @@
-"""
-python -m scripts.generate_finer_cam_panderm \
-  --csv data/HAM10000/ham_test_for_cam.csv \
-  --img_dir data/HAM10000/images \
-  --checkpoint external/weights/checkpoint-best-ham.pth \
-  --class_preset ham \
-  --out_dir outputs/panderm_cam_ham \
-  --num_samples 20 \
-  --method finercam \
-  --compare_mode pred_topk_non_target \
-  --topk_compare 3 \
-  --alpha 0.8
-
-python -m scripts.generate_finer_cam_panderm \
-  --csv data/BCN20000/bcn_test_for_cam.csv \
-  --img_dir data/BCN20000/images \
-  --checkpoint external/weights/checkpoint-best-bcn.pth \
-  --class_preset bcn \
-  --out_dir outputs/panderm_cam_bcn \
-  --num_samples 20 \
-  --method finercam \
-  --compare_mode pred_topk_non_target \
-  --topk_compare 3 \
-  --alpha 0.8
-"""
+# python -m scripts.generate_finer_cam_panderm \
+#   --csv data/isic2018/subsets/val_subset1_gt_MEL_or_NV.csv \
+#   --img_dir data/isic2018/images_val \
+#   --checkpoint external/weights/panderm_bcn_ft_best.pt \
+#   --out_dir outputs/isic7_cam/panderm_pred_topk2 \
+#   --num_samples 20 \
+#   --method finercam \
+#   --compare_mode pred_topk_non_target \
+#   --topk_compare 2
 
 from __future__ import annotations
-
-import warnings
-
-warnings.filterwarnings(
-    "ignore",
-    message=r"Importing from timm\.models\.layers is deprecated.*",
-    category=FutureWarning,
-)
-warnings.filterwarnings(
-    "ignore",
-    message=r"Importing from timm\.models\.registry is deprecated.*",
-    category=FutureWarning,
-)
-warnings.filterwarnings(
-    "ignore",
-    message=r"torch\.meshgrid: in an upcoming release.*",
-    category=UserWarning,
-)
 
 import argparse
 import json
@@ -56,7 +22,7 @@ import torch
 import torchvision.transforms as T
 from PIL import Image
 
-from src.cam.diff_cam import compute_cam_bundle
+from src.cam.diff_cam import compute_cam_triplet
 from src.utils.vis_panel import make_panel_with_subtitles
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -68,25 +34,9 @@ from models.builder import get_eval_transforms  # type: ignore
 from models.modeling_finetune import \
     panderm_base_patch16_224_finetune  # type: ignore
 
-# HAM_CLASSES = ["akiec", "bcc", "bkl", "df", "mel", "nv", "vasc"]
-HAM_CLASSES = ["AKIEC", "BCC", "BKL", "DF", "MEL", "NV", "VASC"]
-# BCN_CLASSES = ["AKIEC", "BCC", "MEL", "NV", "SK", "SL", "SCC", "DF", "VAS"]
-BCN_CLASSES = [
-    "actinic keratosis",
-    "basal cell carcinoma",
-    "melanoma",
-    "nevus",
-    "seborrheic keratosis",
-    "solar lentigo",
-    "squamous cell carcinoma",
-    "dermatofibroma",
-    "vascular lesion",
-]
-
-CLASS_PRESETS = {
-    "ham": HAM_CLASSES,
-    "bcn": BCN_CLASSES,
-}
+PRIMARY_CLASSES = ["NV", "MEL", "BCC", "BKL", "AKIEC", "DF"]
+CLASS_TO_IDX = {c: i for i, c in enumerate(PRIMARY_CLASSES)}
+IDX_TO_CLASS = {i: c for c, i in CLASS_TO_IDX.items()}
 
 
 def parse_args() -> argparse.Namespace:
@@ -94,19 +44,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--csv", type=str, required=True, help="Path to CSV with column 'image' or 'isic_id'.")
     parser.add_argument("--img_dir", type=str, required=True, help="Folder containing JPG images.")
     parser.add_argument("--checkpoint", type=str, required=True, help="Path to PanDerm fine-tuned .pt checkpoint.")
-    parser.add_argument(
-        "--class_preset",
-        type=str,
-        default="ham",
-        choices=["ham", "bcn"],
-        help="Class-name preset matching the fine-tuned baseline-4 checkpoint.",
-    )
-    parser.add_argument(
-        "--class_names",
-        type=str,
-        default=None,
-        help="Optional comma-separated class names overriding --class_preset.",
-    )
     parser.add_argument("--out_dir", type=str, default="outputs/panderm_cam", help="Output folder.")
     parser.add_argument("--image_size", type=int, default=224, help="PanDerm input size. Default: 224.")
     parser.add_argument("--num_samples", type=int, default=10, help="How many images to process.")
@@ -134,23 +71,6 @@ def parse_args() -> argparse.Namespace:
         default=1,
         help="Number of non-target predicted classes to use as comparison categories for FinerCAM. Used by pred_topk_non_target / gt_topk_non_target.",
     )
-    parser.add_argument(
-        "--alpha",
-        type=float,
-        default=0.6,
-        help="Alpha weight for FinerCAM comparison categories. Default: 0.6.",
-    )
-    parser.add_argument(
-        "--save_json",
-        action="store_true",
-        help="If set, also save one metadata JSON file per image. Default: off.",
-    )
-    parser.add_argument(
-        "--panel_scale",
-        type=float,
-        default=1.35,
-        help="Scale factor used to enlarge the tiles in the saved panel.",
-    )
     return parser.parse_args()
 
 
@@ -164,69 +84,25 @@ def get_device(requested: str | None) -> str:
     return "cpu"
 
 
-def resolve_class_names(args: argparse.Namespace) -> list[str]:
-    if args.class_names is not None:
-        names = [x.strip() for x in args.class_names.split(",") if x.strip()]
-        if len(names) == 0:
-            raise ValueError("--class_names was provided but no valid class names were parsed.")
-        return names
-    return CLASS_PRESETS[args.class_preset]
-
-
-
-def build_class_maps(class_names: list[str]) -> tuple[dict[str, int], dict[int, str]]:
-    class_to_idx = {name: i for i, name in enumerate(class_names)}
-    idx_to_class = {i: name for i, name in enumerate(class_names)}
-    return class_to_idx, idx_to_class
-
-
-
 def build_panderm_model(num_classes: int) -> torch.nn.Module:
     model = panderm_base_patch16_224_finetune(
         pretrained=False,
         num_classes=num_classes,
         drop_rate=0.0,
-        drop_path_rate=0.2,
+        drop_path_rate=0.1,
         attn_drop_rate=0.0,
         drop_block_rate=None,
-        use_mean_pooling=True,
+        use_mean_pooling=False,
         init_scale=0.001,
-        use_rel_pos_bias=True,
-        init_values=0.1,
+        use_rel_pos_bias=False,
+        init_values=1e-5,
         lin_probe=False,
     )
     return model
 
 
-
-def remap_official_finetune_checkpoint_keys(state_dict: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
-    remapped = dict(state_dict)
-
-    encoder_keys = [k for k in list(remapped.keys()) if k.startswith("encoder.")]
-    for key in encoder_keys:
-        new_key = key.replace("encoder.", "", 1)
-        remapped[new_key] = remapped[key]
-        remapped.pop(key)
-
-    for key in list(remapped.keys()):
-        if key.startswith("decoder.") or key.startswith("teacher."):
-            remapped.pop(key)
-
-    for key in list(remapped.keys()):
-        if key.startswith("norm."):
-            new_key = key.replace("norm.", "fc_norm.", 1)
-            remapped[new_key] = remapped[key]
-            remapped.pop(key)
-
-    return remapped
-
-
-
 def load_panderm_finetuned_model(
     checkpoint_path: str | Path,
-    num_classes: int,
-    class_to_idx: dict[str, int],
-    idx_to_class: dict[int, str],
     device: str | torch.device | None = None,
 ) -> tuple[torch.nn.Module, dict]:
     checkpoint_path = Path(checkpoint_path)
@@ -236,28 +112,13 @@ def load_panderm_finetuned_model(
     if device is None:
         device = get_device(None)
 
-    model = build_panderm_model(num_classes=num_classes)
+    model = build_panderm_model(num_classes=len(PRIMARY_CLASSES))
 
     ckpt = torch.load(checkpoint_path, map_location="cpu")
+    if "model_state_dict" not in ckpt:
+        raise KeyError("PanDerm checkpoint must contain 'model_state_dict'.")
 
-    if "model_state_dict" in ckpt:
-        state_dict = ckpt["model_state_dict"]
-        checkpoint_format = "custom_pt"
-    elif "model" in ckpt:
-        state_dict = remap_official_finetune_checkpoint_keys(ckpt["model"])
-        checkpoint_format = "official_pth"
-    else:
-        raise KeyError("Checkpoint must contain either 'model_state_dict' or 'model'.")
-
-    state_dict_model = model.state_dict()
-    for k in ["head.weight", "head.bias"]:
-        if k in state_dict and k in state_dict_model and state_dict[k].shape != state_dict_model[k].shape:
-            raise ValueError(
-                f"Checkpoint head shape mismatch for {k}: checkpoint={tuple(state_dict[k].shape)} vs model={tuple(state_dict_model[k].shape)}. "
-                f"Check that --class_preset / --class_names matches the trained checkpoint."
-            )
-
-    missing, unexpected = model.load_state_dict(state_dict, strict=False)
+    missing, unexpected = model.load_state_dict(ckpt["model_state_dict"], strict=True)
     if len(missing) or len(unexpected):
         print(f"[warn] load_state_dict mismatch: missing={len(missing)}, unexpected={len(unexpected)}")
         if missing:
@@ -269,12 +130,11 @@ def load_panderm_finetuned_model(
     model.eval()
 
     info = {
-        "arch": "PanDerm Base FT",
-        "num_classes": num_classes,
+        "arch": "PanDerm Base",
+        "num_classes": len(PRIMARY_CLASSES),
         "checkpoint_name": checkpoint_path.name,
-        "checkpoint_format": checkpoint_format,
-        "class_to_idx": class_to_idx,
-        "idx_to_class": idx_to_class,
+        "class_to_idx": CLASS_TO_IDX,
+        "idx_to_class": IDX_TO_CLASS,
         "image_size": ckpt.get("image_size", 224),
         "stage_name": ckpt.get("stage_name", None),
         "epoch": ckpt.get("epoch", None),
@@ -334,16 +194,7 @@ def main() -> None:
 
     device = get_device(args.device)
 
-    class_names = resolve_class_names(args)
-    class_to_idx, idx_to_class = build_class_maps(class_names)
-
-    model_raw, info = load_panderm_finetuned_model(
-        ckpt_path,
-        num_classes=len(class_names),
-        class_to_idx=class_to_idx,
-        idx_to_class=idx_to_class,
-        device=device,
-    )
+    model_raw, info = load_panderm_finetuned_model(ckpt_path, device=device)
     model = PanDermCAMWrapper(model_raw)
 
     image_size = int(info.get("image_size", args.image_size) or args.image_size)
@@ -368,10 +219,7 @@ def main() -> None:
 
     for _, row in df.iterrows():
         image_id = get_image_id(row)
-        if image_id.lower().endswith(".jpg") or image_id.lower().endswith(".jpeg") or image_id.lower().endswith(".png"):
-            img_path = img_dir / image_id
-        else:
-            img_path = img_dir / f"{image_id}.jpg"
+        img_path = img_dir / f"{image_id}.jpg"
         if not img_path.exists():
             print(f"[skip] missing image: {img_path}")
             continue
@@ -393,17 +241,17 @@ def main() -> None:
         if args.compare_mode == "fixed":
             if args.A is None or args.B is None:
                 raise ValueError("compare_mode=fixed requires --A and --B")
-            if args.A not in class_to_idx or args.B not in class_to_idx:
-                raise ValueError(f"Unknown class name. Allowed: {class_names}")
-            A_idx = class_to_idx[args.A]
-            B_idx = class_to_idx[args.B]
+            if args.A not in CLASS_TO_IDX or args.B not in CLASS_TO_IDX:
+                raise ValueError(f"Unknown class name. Allowed: {PRIMARY_CLASSES}")
+            A_idx = CLASS_TO_IDX[args.A]
+            B_idx = CLASS_TO_IDX[args.B]
             comparison_categories = [B_idx]
 
         elif args.compare_mode == "gt_pair":
             if args.A is None or args.B is None:
                 raise ValueError("compare_mode=gt_pair requires --A and --B")
-            if args.A not in class_to_idx or args.B not in class_to_idx:
-                raise ValueError(f"Unknown class name. Allowed: {class_names}")
+            if args.A not in CLASS_TO_IDX or args.B not in CLASS_TO_IDX:
+                raise ValueError(f"Unknown class name. Allowed: {PRIMARY_CLASSES}")
             if "gt_label" not in df.columns:
                 raise ValueError("compare_mode=gt_pair requires the CSV to contain a 'gt_label' column.")
             gt = str(row["gt_label"])
@@ -411,11 +259,11 @@ def main() -> None:
                 print(f"[skip] {image_id}: gt_label={gt} not in pair ({args.A},{args.B})")
                 continue
             if gt == args.A:
-                A_idx = class_to_idx[args.A]
-                B_idx = class_to_idx[args.B]
+                A_idx = CLASS_TO_IDX[args.A]
+                B_idx = CLASS_TO_IDX[args.B]
             else:
-                A_idx = class_to_idx[args.B]
-                B_idx = class_to_idx[args.A]
+                A_idx = CLASS_TO_IDX[args.B]
+                B_idx = CLASS_TO_IDX[args.A]
             comparison_categories = [B_idx]
 
         elif args.compare_mode == "pred_topk_non_target":
@@ -427,17 +275,17 @@ def main() -> None:
             if "gt_label" not in df.columns:
                 raise ValueError("compare_mode=gt_topk_non_target requires the CSV to contain a 'gt_label' column.")
             gt = str(row["gt_label"])
-            if gt not in class_to_idx:
-                print(f"[skip] {image_id}: gt_label={gt} not in class list")
+            if gt not in CLASS_TO_IDX:
+                print(f"[skip] {image_id}: gt_label={gt} not in PRIMARY_CLASSES")
                 continue
-            A_idx = class_to_idx[gt]
+            A_idx = CLASS_TO_IDX[gt]
             comparison_categories = [int(i) for i in sorted_idx if int(i) != A_idx][: max(1, args.topk_compare)]
             if len(comparison_categories) == 0:
                 print(f"[skip] {image_id}: could not find non-target comparison categories")
                 continue
             B_idx = comparison_categories[0]
 
-        res = compute_cam_bundle(
+        res = compute_cam_triplet(
             model=model,
             input_tensor=x,
             rgb_float=rgb_resized,
@@ -447,78 +295,59 @@ def main() -> None:
             B=B_idx,
             comparison_categories=comparison_categories,
             reshape_transform=vit_reshape_transform,
-            alpha=args.alpha,
         )
 
         top3_idx = np.argsort(res["probs"])[-3:][::-1]
-        top3_named = ", ".join([f"{idx_to_class[i]}: {res['probs'][i]:.3f}" for i in top3_idx])
+        top3_named = ", ".join([f"{IDX_TO_CLASS[i]}: {res['probs'][i]:.3f}" for i in top3_idx])
 
-        A_name = idx_to_class.get(int(res["A"]), str(res["A"]))
-        B_name = idx_to_class.get(int(res["B"]), str(res["B"]))
-        comp_named = ", ".join([idx_to_class[int(i)] for i in res.get("comparison_categories", [res["B"]])])
+        A_name = IDX_TO_CLASS.get(int(res["A"]), str(res["A"]))
+        B_name = IDX_TO_CLASS.get(int(res["B"]), str(res["B"]))
+        comp_named = ", ".join([IDX_TO_CLASS[int(i)] for i in res.get("comparison_categories", [res["B"]])])
         print(f"[info] {image_id}: A={res['A']}({A_name})  B={res['B']}({B_name})  comparison=[{comp_named}]  top3=[{top3_named}]")
 
         gt_label = row["gt_label"] if "gt_label" in df.columns else None
-        gradcam_a_prob = float(res["probs"][int(res["A"])])
-        gradcam_b_prob = float(res["probs"][int(res["B"])])
-        finercam_prob = float(res["probs"][int(res["A"])])
-        rollout_prob = float(res["probs"][int(res["A"])])
-
-        first_tile_line1 = str(image_id)
-        first_tile_line2 = f"GT={gt_label}" if gt_label is not None else "RGB"
+        A_prob = float(res["probs"][int(res["A"])])
+        B_prob = float(res["probs"][int(res["B"])])
 
         panel_img_uint8 = make_panel_with_subtitles(
-            first_tile_line1=first_tile_line1,
-            first_tile_line2=first_tile_line2,
+            image_id=str(image_id),
             rgb_float=rgb_resized,
-            gradcam_overlay_a=res["overlay_gradcam"],
-            gradcam_overlay_b=res["overlay_gradcam_B"],
-            finercam_overlay=res["overlay_finercam"],
-            rollout_overlay=res["overlay_rollout"],
-            gradcam_a_line1="GradCAM",
-            gradcam_a_line2=f"{A_name} ({gradcam_a_prob:.2f})",
-            gradcam_b_line1="GradCAM",
-            gradcam_b_line2=f"{B_name} ({gradcam_b_prob:.2f})",
-            finercam_line1="FinerCAM",
-            finercam_line2=f"{A_name} vs {B_name} ({finercam_prob:.2f})",
-            rollout_line1="Rollout",
-            rollout_line2=f"{A_name} ({rollout_prob:.2f})",
-            scale=args.panel_scale,
+            overlay_A=res["overlay_A"],
+            overlay_B=res["overlay_B"],
+            overlay_diff=res["overlay_diff"],
+            method=args.method,
+            A_name=A_name,
+            B_name=B_name,
+            A_prob=A_prob,
+            B_prob=B_prob,
+            gt_label=gt_label,
+            include_rgb=True,
         )
 
-        panel_path = out_dir / f"{image_id}_RGB_GradCAMA_GradCAMB_FinerCAM_Rollout.png"
+        panel_path = out_dir / f"{image_id}_RGB_A_B_DIFF_{args.method}.png"
         Image.fromarray(panel_img_uint8).save(panel_path)
 
-        if args.save_json:
-            meta = {
-                "image_id": str(image_id),
-                "img_path": str(img_path),
-                "checkpoint": ckpt_path.name,
-                "model_type": "panderm_ft",
-                "image_size": image_size,
-                "device": device,
-                "A_idx": int(res["A"]),
-                "B_idx": int(res["B"]),
-                "comparison_categories": [int(i) for i in res.get("comparison_categories", [res["B"]])],
-                "comparison_category_names": [idx_to_class[int(i)] for i in res.get("comparison_categories", [res["B"]])],
-                "topk_compare": int(args.topk_compare),
-                "alpha": float(args.alpha),
-                "probs_top3": res["probs_top3"],
-                "method": args.method,
-                "panel_path": str(panel_path),
-                "compare_mode": args.compare_mode,
-                "A_name": A_name,
-                "B_name": B_name,
-                "target_layer": "model_raw.blocks[-1].norm1",
-                "class_names": class_names,
-                "class_preset": args.class_preset,
-                "checkpoint_format": info.get("checkpoint_format"),
-                "gradcam_a_prob": gradcam_a_prob,
-                "gradcam_b_prob": gradcam_b_prob,
-                "finercam_prob": finercam_prob,
-                "rollout_prob": rollout_prob,
-            }
-            (out_dir / f"{image_id}_meta.json").write_text(json.dumps(meta, indent=2))
+        meta = {
+            "image_id": str(image_id),
+            "img_path": str(img_path),
+            "checkpoint": ckpt_path.name,
+            "model_type": "panderm_ft",
+            "image_size": image_size,
+            "device": device,
+            "A_idx": int(res["A"]),
+            "B_idx": int(res["B"]),
+            "comparison_categories": [int(i) for i in res.get("comparison_categories", [res["B"]])],
+            "comparison_category_names": [IDX_TO_CLASS[int(i)] for i in res.get("comparison_categories", [res["B"]])],
+            "topk_compare": int(args.topk_compare),
+            "probs_top3": res["probs_top3"],
+            "method": args.method,
+            "panel_path": str(panel_path),
+            "compare_mode": args.compare_mode,
+            "A_name": A_name,
+            "B_name": B_name,
+            "target_layer": "model_raw.blocks[-1].norm1",
+        }
+        (out_dir / f"{image_id}_meta.json").write_text(json.dumps(meta, indent=2))
 
     print(f"Done. Outputs in: {out_dir}")
 

@@ -1,78 +1,122 @@
-# src/utils/vis_panel.py
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Optional
 
-import cv2
 import numpy as np
+from PIL import Image, ImageDraw, ImageFont
 
 
-def _draw_centered_text(img: np.ndarray, text: str, *, font_scale: float = 0.7) -> None:
-    """Draw centered black text on a white bar."""
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    thickness = 2
-    (tw, th), _ = cv2.getTextSize(text, font, font_scale, thickness)
-    h, w = img.shape[:2]
-    x = max(10, (w - tw) // 2)
-    y = (h + th) // 2
-    cv2.putText(img, text, (x, y), font, font_scale, (0, 0, 0), thickness, cv2.LINE_AA)
+def _to_uint8_rgb(img: np.ndarray) -> np.ndarray:
+    arr = np.asarray(img)
+    if arr.ndim != 3 or arr.shape[2] != 3:
+        raise ValueError(f"Expected an RGB image with shape (H, W, 3), got {arr.shape}")
+
+    if arr.dtype == np.uint8:
+        return arr.copy()
+
+    arr = np.clip(arr, 0.0, 1.0)
+    return (arr * 255.0).round().astype(np.uint8)
+
+
+def _draw_centered_text(draw: ImageDraw.ImageDraw, box, text: str, font, fill=(0, 0, 0)) -> None:
+    left, top, right, bottom = box
+    bbox = draw.textbbox((0, 0), text, font=font)
+    text_w = bbox[2] - bbox[0]
+    text_h = bbox[3] - bbox[1]
+    x = left + (right - left - text_w) / 2
+    y = top + (bottom - top - text_h) / 2
+    draw.text((x, y), text, font=font, fill=fill)
+
+
+def _load_font(size: int, bold: bool = False):
+    candidates = []
+    if bold:
+        candidates.extend([
+            "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+            "/Library/Fonts/Arial Bold.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        ])
+    else:
+        candidates.extend([
+            "/System/Library/Fonts/Supplemental/Arial.ttf",
+            "/Library/Fonts/Arial.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        ])
+
+    for path in candidates:
+        try:
+            return ImageFont.truetype(path, size=size)
+        except Exception:
+            continue
+    return ImageFont.load_default()
 
 
 def make_panel_with_subtitles(
-    *,
-    image_id: str,
-    rgb_float: np.ndarray,            # (H,W,3) float in [0,1]
-    overlay_A: np.ndarray,            # (H,W,3) uint8
-    overlay_B: np.ndarray,            # (H,W,3) uint8
-    overlay_diff: np.ndarray,         # (H,W,3) uint8
-    method: str,
-    A_name: str,
-    B_name: str,
-    A_prob: float,
-    B_prob: float,
-    gt_label: Optional[str] = None,
-    include_rgb: bool = True,
-    subtitle_h: int = 48,
+    first_tile_line1: str,
+    first_tile_line2: str,
+    rgb_float: np.ndarray,
+    gradcam_overlay_a: np.ndarray,
+    gradcam_overlay_b: np.ndarray,
+    finercam_overlay: np.ndarray,
+    rollout_overlay: np.ndarray,
+    gradcam_a_line1: str,
+    gradcam_a_line2: str,
+    gradcam_b_line1: str,
+    gradcam_b_line2: str,
+    finercam_line1: str,
+    finercam_line2: str,
+    rollout_line1: str,
+    rollout_line2: str,
+    scale: float = 1.35,
 ) -> np.ndarray:
-    """
-    Returns a panel with subtitles UNDER each column (not drawn on top of the images).
-    Layout:
-      Row 1: RGB | A | B | DIFF   (or A | B | DIFF if include_rgb=False)
-      Row 2: subtitles under each column
-    """
-    # RGB as uint8
-    rgb_uint8 = (rgb_float * 255.0).clip(0, 255).astype(np.uint8)
+    rgb_uint8 = _to_uint8_rgb(rgb_float)
+    gradcam_a_uint8 = _to_uint8_rgb(gradcam_overlay_a)
+    gradcam_b_uint8 = _to_uint8_rgb(gradcam_overlay_b)
+    finercam_uint8 = _to_uint8_rgb(finercam_overlay)
+    rollout_uint8 = _to_uint8_rgb(rollout_overlay)
 
-    cols: List[np.ndarray]
-    subtitles: List[str]
+    tiles = [
+        rgb_uint8,
+        gradcam_a_uint8,
+        gradcam_b_uint8,
+        finercam_uint8,
+        rollout_uint8,
+    ]
+    subtitle_pairs = [
+        (first_tile_line1, first_tile_line2),
+        (gradcam_a_line1, gradcam_a_line2),
+        (gradcam_b_line1, gradcam_b_line2),
+        (finercam_line1, finercam_line2),
+        (rollout_line1, rollout_line2),
+    ]
 
-    if include_rgb:
-        cols = [rgb_uint8, overlay_A, overlay_B, overlay_diff]
-        subtitles = [
-            f"{image_id} GT={gt_label or '?'}",
-            f"{A_name}({A_prob:.3f})",
-            f"{B_name}({B_prob:.3f})",
-            f"method={method}",
-        ]
-    else:
-        cols = [overlay_A, overlay_B, overlay_diff]
-        subtitles = [
-            f"{A_name}({A_prob:.3f})",
-            f"{B_name}({B_prob:.3f})",
-            f"method={method}",
-        ]
+    h, w, _ = tiles[0].shape
+    for tile in tiles:
+        if tile.shape != (h, w, 3):
+            raise ValueError("All panel tiles must have the same shape.")
 
-    panel_top = np.hstack(cols)
+    scaled_w = max(1, int(round(w * scale)))
+    scaled_h = max(1, int(round(h * scale)))
 
-    # Build subtitle bars (one per column, same width as each column)
-    h, w_total, _ = panel_top.shape
-    col_w = cols[0].shape[1]
-    bars = []
-    for s in subtitles:
-        bar = np.full((subtitle_h, col_w, 3), 255, dtype=np.uint8)
-        _draw_centered_text(bar, s, font_scale=0.7)
-        bars.append(bar)
+    gap = 16
+    subtitle_h = 72
+    panel_w = len(tiles) * scaled_w + (len(tiles) - 1) * gap
+    panel_h = scaled_h + subtitle_h
 
-    panel_bottom = np.hstack(bars)
-    out = np.vstack([panel_top, panel_bottom])
-    return out
+    canvas = Image.new("RGB", (panel_w, panel_h), color=(255, 255, 255))
+    draw = ImageDraw.Draw(canvas)
+    line1_font = _load_font(20, bold=True)
+    line2_font = _load_font(18, bold=True)
+
+    x = 0
+    for tile, (line1, line2) in zip(tiles, subtitle_pairs):
+        tile_img = Image.fromarray(tile).resize((scaled_w, scaled_h), resample=Image.Resampling.BICUBIC)
+        canvas.paste(tile_img, (x, 0))
+
+        line1_box = (x, scaled_h + 4, x + scaled_w, scaled_h + 34)
+        line2_box = (x, scaled_h + 34, x + scaled_w, scaled_h + subtitle_h)
+        _draw_centered_text(draw, line1_box, line1, font=line1_font)
+        _draw_centered_text(draw, line2_box, line2, font=line2_font)
+        x += scaled_w + gap
+
+    return np.array(canvas)

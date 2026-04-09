@@ -7,8 +7,13 @@ Implements confidence drop and deletion metrics for evaluating CAM quality.
 import torch
 import torch.nn as nn
 import numpy as np
-from typing import Callable, List, Tuple, Dict
+from typing import Callable, List, Tuple, Dict, Optional
 from tqdm import tqdm
+
+
+def _safe_divide(numerator: float, denominator: float, eps: float = 1e-8) -> float:
+    """Safely divide two floats."""
+    return float(numerator) / float(denominator + eps)
 
 
 class ConfidenceDropMetric:
@@ -33,53 +38,60 @@ class ConfidenceDropMetric:
     
     def compute(self, images: torch.Tensor, cams: torch.Tensor, 
                 target_classes: torch.Tensor, mask_value: float = 0.0) -> Dict[str, float]:
-        """
-        Compute confidence drop metric.
-        
-        Args:
-            images: Input images [B, C, H, W]
-            cams: CAM heatmaps [B, H, W]
-            target_classes: Target class indices [B]
-            mask_value: Value to use for masked regions (0 for black)
-            
-        Returns:
-            Dictionary with confidence drop results
-        """
-        device = images.device
         batch_size = images.shape[0]
-        
+
         # Get original predictions
         with torch.no_grad():
             original_logits = self.model(images)
             original_probs = torch.softmax(original_logits, dim=1)
             original_conf = original_probs[range(batch_size), target_classes]
-        
+
+        original_conf_mean = float(original_conf.mean().item())
+        per_sample_original = original_conf.detach().cpu().numpy().astype(np.float64)
+
         results = {
-            'original_confidence': original_conf.mean().item(),
-            'drops': []
+            'original_confidence': original_conf_mean,
+            'drops': [],
+            'per_sample_original_confidence': per_sample_original.tolist(),
         }
-        
+
         # Compute confidence for each perturbation level
         for ratio in self.perturbation_steps:
             perturbed_images = self._perturb_images(images, cams, ratio, mask_value)
-            
+
             with torch.no_grad():
                 perturbed_logits = self.model(perturbed_images)
                 perturbed_probs = torch.softmax(perturbed_logits, dim=1)
                 perturbed_conf = perturbed_probs[range(batch_size), target_classes]
-            
-            drop = (original_conf - perturbed_conf).mean().item()
+
+            per_sample_perturbed = perturbed_conf.detach().cpu().numpy().astype(np.float64)
+            per_sample_drop = per_sample_original - per_sample_perturbed
+            per_sample_relative_drop = [
+                _safe_divide(drop_i, orig_i)
+                for drop_i, orig_i in zip(per_sample_drop.tolist(), per_sample_original.tolist())
+            ]
+
+            mean_conf = float(np.mean(per_sample_perturbed))
+            mean_drop = float(np.mean(per_sample_drop))
+            mean_relative_drop = float(np.mean(per_sample_relative_drop))
+
             results['drops'].append({
                 'ratio': ratio,
-                'confidence': perturbed_conf.mean().item(),
-                'drop': drop,
-                'relative_drop': drop / (original_conf.mean().item() + 1e-8)
+                'confidence': mean_conf,
+                'drop': mean_drop,
+                'relative_drop': mean_relative_drop,
+                'per_sample_confidence': per_sample_perturbed.tolist(),
+                'per_sample_drop': per_sample_drop.tolist(),
+                'per_sample_relative_drop': per_sample_relative_drop,
             })
-        
-        # Compute average drop
-        results['average_drop'] = np.mean([d['drop'] for d in results['drops']])
-        results['average_relative_drop'] = np.mean([d['relative_drop'] for d in results['drops']])
-        
+
+        # Compute average drop across all perturbation ratios
+        results['average_drop'] = float(np.mean([d['drop'] for d in results['drops']]))
+        results['average_relative_drop'] = float(np.mean([d['relative_drop'] for d in results['drops']]))
+
+        # Common alias used in papers / tables
+        results['relative_confidence_drop'] = results['average_relative_drop']
+
         return results
     
     def _perturb_images(self, images: torch.Tensor, cams: torch.Tensor, 
@@ -145,62 +157,53 @@ class DeletionMetric:
     
     def compute(self, images: torch.Tensor, cams: torch.Tensor, 
                 target_classes: torch.Tensor, mask_value: float = 0.0) -> Dict[str, float]:
-        """
-        Compute deletion metric (area under deletion curve).
-        
-        Args:
-            images: Input images [B, C, H, W]
-            cams: CAM heatmaps [B, H, W]
-            target_classes: Target class indices [B]
-            mask_value: Value to use for masked regions
-            
-        Returns:
-            Dictionary with deletion metric results
-        """
-        device = images.device
         batch_size = images.shape[0]
-        
+
         # Get original predictions
         with torch.no_grad():
             original_logits = self.model(images)
             original_probs = torch.softmax(original_logits, dim=1)
             original_conf = original_probs[range(batch_size), target_classes]
-        
+
         # Resize CAMs to match image size
         if cams.shape[-2:] != images.shape[-2:]:
             cams = nn.functional.interpolate(
-                cams.unsqueeze(1), 
-                size=images.shape[-2:], 
-                mode='bilinear', 
+                cams.unsqueeze(1),
+                size=images.shape[-2:],
+                mode='bilinear',
                 align_corners=False
             ).squeeze(1)
-        
+
         # Track confidence over deletion steps
         confidence_curve = []
-        
+        per_sample_curve = []
+
         for step in range(self.num_steps + 1):
             ratio = step / self.num_steps
-            
+
             # Delete top ratio% of pixels
             perturbed_images = self._delete_pixels(images, cams, ratio, mask_value)
-            
+
             with torch.no_grad():
                 perturbed_logits = self.model(perturbed_images)
                 perturbed_probs = torch.softmax(perturbed_logits, dim=1)
                 perturbed_conf = perturbed_probs[range(batch_size), target_classes]
-            
-            confidence_curve.append(perturbed_conf.mean().item())
-        
+
+            per_sample_conf = perturbed_conf.detach().cpu().numpy().astype(np.float64)
+            per_sample_curve.append(per_sample_conf.tolist())
+            confidence_curve.append(float(np.mean(per_sample_conf)))
+
         # Compute area under curve (normalized)
-        auc = np.trapz(confidence_curve, dx=1.0/self.num_steps)
-        
+        auc = float(np.trapz(confidence_curve, dx=1.0 / self.num_steps))
+
         results = {
-            'original_confidence': original_conf.mean().item(),
+            'original_confidence': float(original_conf.mean().item()),
             'auc': auc,
             'confidence_curve': confidence_curve,
-            'deletion_steps': list(range(self.num_steps + 1))
+            'per_sample_confidence_curve': per_sample_curve,
+            'deletion_steps': list(range(self.num_steps + 1)),
         }
-        
+
         return results
     
     def _delete_pixels(self, images: torch.Tensor, cams: torch.Tensor,
@@ -249,26 +252,14 @@ class InsertionMetric:
     
     def compute(self, images: torch.Tensor, cams: torch.Tensor,
                 target_classes: torch.Tensor) -> Dict[str, float]:
-        """
-        Compute insertion metric (area under insertion curve).
-        
-        Args:
-            images: Input images [B, C, H, W]
-            cams: CAM heatmaps [B, H, W]
-            target_classes: Target class indices [B]
-            
-        Returns:
-            Dictionary with insertion metric results
-        """
-        device = images.device
         batch_size = images.shape[0]
-        
+
         # Get original predictions
         with torch.no_grad():
             original_logits = self.model(images)
             original_probs = torch.softmax(original_logits, dim=1)
             original_conf = original_probs[range(batch_size), target_classes]
-        
+
         # Resize CAMs to match image size
         if cams.shape[-2:] != images.shape[-2:]:
             cams = nn.functional.interpolate(
@@ -277,36 +268,40 @@ class InsertionMetric:
                 mode='bilinear',
                 align_corners=False
             ).squeeze(1)
-        
+
         # Track confidence over insertion steps
         confidence_curve = []
-        
+        per_sample_curve = []
+
         # Start with baseline (black image)
         baseline = torch.zeros_like(images)
-        
+
         for step in range(self.num_steps + 1):
             ratio = step / self.num_steps
-            
+
             # Insert top ratio% of pixels
             inserted_images = self._insert_pixels(images, baseline, cams, ratio)
-            
+
             with torch.no_grad():
                 inserted_logits = self.model(inserted_images)
                 inserted_probs = torch.softmax(inserted_logits, dim=1)
                 inserted_conf = inserted_probs[range(batch_size), target_classes]
-            
-            confidence_curve.append(inserted_conf.mean().item())
-        
+
+            per_sample_conf = inserted_conf.detach().cpu().numpy().astype(np.float64)
+            per_sample_curve.append(per_sample_conf.tolist())
+            confidence_curve.append(float(np.mean(per_sample_conf)))
+
         # Compute area under curve (normalized)
-        auc = np.trapz(confidence_curve, dx=1.0/self.num_steps)
-        
+        auc = float(np.trapz(confidence_curve, dx=1.0 / self.num_steps))
+
         results = {
-            'original_confidence': original_conf.mean().item(),
+            'original_confidence': float(original_conf.mean().item()),
             'auc': auc,
             'confidence_curve': confidence_curve,
-            'insertion_steps': list(range(self.num_steps + 1))
+            'per_sample_confidence_curve': per_sample_curve,
+            'insertion_steps': list(range(self.num_steps + 1)),
         }
-        
+
         return results
     
     def _insert_pixels(self, images: torch.Tensor, baseline: torch.Tensor,
@@ -333,3 +328,76 @@ class InsertionMetric:
                 inserted[i, c][mask] = images[i, c][mask]
         
         return inserted
+
+
+def summarize_metric_dict(metric_dict: Dict[str, float]) -> Dict[str, float]:
+    """
+    Keep only compact scalar fields that are easy to serialize into CSV/JSON tables.
+    """
+    summary = {}
+    for key in [
+        'original_confidence',
+        'average_drop',
+        'average_relative_drop',
+        'relative_confidence_drop',
+        'auc',
+    ]:
+        if key in metric_dict:
+            summary[key] = float(metric_dict[key])
+    return summary
+
+
+@torch.no_grad()
+def evaluate_multiple_cams(
+    model: nn.Module,
+    images: torch.Tensor,
+    cams_by_method: Dict[str, torch.Tensor],
+    target_classes: torch.Tensor,
+    confidence_metric: Optional[ConfidenceDropMetric] = None,
+    deletion_metric: Optional[DeletionMetric] = None,
+    insertion_metric: Optional[InsertionMetric] = None,
+    mask_value: float = 0.0,
+) -> Dict[str, Dict[str, Dict[str, float]]]:
+    """
+    Evaluate several CAM tensors on the same image batch.
+
+    Returns a nested dictionary of the form:
+    {
+        method_name: {
+            'confidence_drop': {...},
+            'deletion': {...},
+            'insertion': {...},
+        }
+    }
+    """
+    results: Dict[str, Dict[str, Dict[str, float]]] = {}
+
+    for method_name, cams in cams_by_method.items():
+        method_results: Dict[str, Dict[str, float]] = {}
+
+        if confidence_metric is not None:
+            method_results['confidence_drop'] = confidence_metric.compute(
+                images=images,
+                cams=cams,
+                target_classes=target_classes,
+                mask_value=mask_value,
+            )
+
+        if deletion_metric is not None:
+            method_results['deletion'] = deletion_metric.compute(
+                images=images,
+                cams=cams,
+                target_classes=target_classes,
+                mask_value=mask_value,
+            )
+
+        if insertion_metric is not None:
+            method_results['insertion'] = insertion_metric.compute(
+                images=images,
+                cams=cams,
+                target_classes=target_classes,
+            )
+
+        results[method_name] = method_results
+
+    return results
