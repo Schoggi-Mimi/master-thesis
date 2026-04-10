@@ -57,12 +57,15 @@ def make_panel_with_subtitles(
     rgb_float: np.ndarray,
     gradcam_overlay_a: np.ndarray,
     gradcam_overlay_b: np.ndarray,
+    gradcam_diff_overlay: np.ndarray,
     finercam_overlay: np.ndarray,
     rollout_overlay: np.ndarray,
     gradcam_a_line1: str,
     gradcam_a_line2: str,
     gradcam_b_line1: str,
     gradcam_b_line2: str,
+    gradcam_diff_line1: str,
+    gradcam_diff_line2: str,
     finercam_line1: str,
     finercam_line2: str,
     rollout_line1: str,
@@ -72,6 +75,7 @@ def make_panel_with_subtitles(
     rgb_uint8 = _to_uint8_rgb(rgb_float)
     gradcam_a_uint8 = _to_uint8_rgb(gradcam_overlay_a)
     gradcam_b_uint8 = _to_uint8_rgb(gradcam_overlay_b)
+    gradcam_diff_uint8 = _to_uint8_rgb(gradcam_diff_overlay)
     finercam_uint8 = _to_uint8_rgb(finercam_overlay)
     rollout_uint8 = _to_uint8_rgb(rollout_overlay)
 
@@ -79,6 +83,7 @@ def make_panel_with_subtitles(
         rgb_uint8,
         gradcam_a_uint8,
         gradcam_b_uint8,
+        gradcam_diff_uint8,
         finercam_uint8,
         rollout_uint8,
     ]
@@ -86,6 +91,7 @@ def make_panel_with_subtitles(
         (first_tile_line1, first_tile_line2),
         (gradcam_a_line1, gradcam_a_line2),
         (gradcam_b_line1, gradcam_b_line2),
+        (gradcam_diff_line1, gradcam_diff_line2),
         (finercam_line1, finercam_line2),
         (rollout_line1, rollout_line2),
     ]

@@ -47,7 +47,7 @@ def _run_standard_cam(
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Returns (cam_A, cam_B, cam_diff, vis_A, vis_B, vis_diff)
-    where cam_diff is computed by targeting logit(A) - gamma * logit(B).
+    where cam_diff is the plain positive map difference max(0, cam_A - cam_B).
     """
     cam = cam_cls(
         model=model,
@@ -61,7 +61,9 @@ def _run_standard_cam(
     cam_B = cam(input_tensor=input_tensor, targets=[ClassifierOutputTarget(B)])[0]
     vis_B = show_cam_on_image(rgb_float, cam_B, use_rgb=True)
 
-    cam_diff = cam(input_tensor=input_tensor, targets=[LogitDiffTarget(A, B, gamma=0.6)])[0]
+    cam_diff = np.maximum(cam_A - cam_B, 0.0)
+    cam_diff = cam_diff - cam_diff.min()
+    cam_diff = cam_diff / (cam_diff.max() + 1e-8)
     vis_diff = show_cam_on_image(rgb_float, cam_diff, use_rgb=True)
 
     return cam_A, cam_B, cam_diff, vis_A, vis_B, vis_diff
@@ -224,7 +226,7 @@ def compute_cam_bundle(
     probs = probs_t.detach().cpu().numpy()
     probs_top3 = torch.topk(probs_t, 3).values.detach().cpu().tolist()
 
-    cam_A, cam_B_grad, _, vis_A, vis_B_grad, _ = _run_standard_cam(
+    cam_A, cam_B_grad, cam_diff_grad, vis_A, vis_B_grad, vis_diff_grad = _run_standard_cam(
         GradCAM,
         model,
         input_tensor,
@@ -268,10 +270,12 @@ def compute_cam_bundle(
         "probs_top3": probs_top3,
         "cam_gradcam": cam_A,
         "cam_gradcam_B": cam_B_grad,
+        "cam_gradcam_diff": cam_diff_grad,
         "cam_finercam": cam_finer,
         "cam_rollout": cam_rollout,
         "overlay_gradcam": vis_A,
         "overlay_gradcam_B": vis_B_grad,
+        "overlay_gradcam_diff": vis_diff_grad,
         "overlay_finercam": vis_finer,
         "overlay_rollout": vis_rollout,
     }

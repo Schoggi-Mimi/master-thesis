@@ -473,12 +473,15 @@ def main() -> None:
             rgb_float=rgb_resized,
             gradcam_overlay_a=res["overlay_gradcam"],
             gradcam_overlay_b=res["overlay_gradcam_B"],
+            gradcam_diff_overlay=res["overlay_gradcam_diff"],
             finercam_overlay=res["overlay_finercam"],
             rollout_overlay=res["overlay_rollout"],
             gradcam_a_line1="GradCAM",
             gradcam_a_line2=f"{A_name} ({gradcam_a_prob:.2f})",
             gradcam_b_line1="GradCAM",
             gradcam_b_line2=f"{B_name} ({gradcam_b_prob:.2f})",
+            gradcam_diff_line1="Map Diff",
+            gradcam_diff_line2=f"max(0, {A_name} - {B_name})",
             finercam_line1="FinerCAM",
             finercam_line2=f"{A_name} vs {B_name} ({finercam_prob:.2f})",
             rollout_line1="Rollout",
@@ -486,7 +489,7 @@ def main() -> None:
             scale=args.panel_scale,
         )
 
-        panel_path = out_dir / f"{image_id}_RGB_GradCAMA_GradCAMB_FinerCAM_Rollout.png"
+        panel_path = out_dir / f"{image_id}_RGB_GradCAMA_GradCAMB_GradCAMDiff_FinerCAM_Rollout.png"
         Image.fromarray(panel_img_uint8).save(panel_path)
 
         if args.save_json:
@@ -515,6 +518,7 @@ def main() -> None:
                 "checkpoint_format": info.get("checkpoint_format"),
                 "gradcam_a_prob": gradcam_a_prob,
                 "gradcam_b_prob": gradcam_b_prob,
+                "gradcam_diff_desc": f"max(0, {A_name} - {B_name})",
                 "finercam_prob": finercam_prob,
                 "rollout_prob": rollout_prob,
             }
