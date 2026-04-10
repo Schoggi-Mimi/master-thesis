@@ -15,7 +15,8 @@ python -m scripts.eval_cam_metrics_panderm \
   --out_dir outputs/panderm_cam_metrics_ham \
   --num_samples 20 \
   --compare_mode pred_topk_non_target \
-  --topk_compare 2
+  --topk_compare 
+  --perturbation_steps 0.1
 
 python -m scripts.eval_cam_metrics_panderm \
   --csv data/BCN20000/bcn_test_for_cam.csv \
@@ -26,6 +27,7 @@ python -m scripts.eval_cam_metrics_panderm \
   --num_samples 20 \
   --compare_mode pred_topk_non_target \
   --topk_compare 2
+  --perturbation_steps 0.1
 
 """
 
@@ -41,6 +43,7 @@ import cv2
 import numpy as np
 import pandas as pd
 import torch
+import torch.nn.functional as F
 import torchvision.transforms as T
 from PIL import Image
 from tqdm import tqdm
@@ -67,8 +70,9 @@ from scripts.generate_finer_cam_panderm import (PanDermCAMWrapper,
                                                 resolve_class_names,
                                                 vit_reshape_transform)
 from src.cam.diff_cam import compute_cam_bundle
-from src.eval.cam_metrics import (ConfidenceDropMetric, DeletionMetric,
-                                  InsertionMetric, summarize_metric_dict)
+from src.eval.cam_metrics import (DeletionMetric, InsertionMetric,
+                                  RelativeConfidenceDropMetric,
+                                  summarize_metric_dict)
 
 
 def parse_args() -> argparse.Namespace:
@@ -87,7 +91,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--num_samples", type=int, default=20)
     p.add_argument("--device", type=str, default=None)
 
-    p.add_argument("--compare_mode", type=str, default="pred_topk_non_target")
+    p.add_argument(
+        "--compare_mode",
+        type=str,
+        default="pred_topk_non_target",
+        choices=["fixed", "top2", "pred_topk_non_target", "gt_topk_non_target"],
+    )
     p.add_argument("--topk_compare", type=int, default=2)
     p.add_argument(
         "--alpha",
@@ -95,6 +104,8 @@ def parse_args() -> argparse.Namespace:
         default=0.6,
         help="Alpha weight for FinerCAM comparison categories. Default: 0.6.",
     )
+    p.add_argument("--A", type=str, default=None, help="Fixed target class name for compare_mode=fixed.")
+    p.add_argument("--B", type=str, default=None, help="Fixed reference class name for compare_mode=fixed.")
     p.add_argument("--cam_target_layer", type=str, default="last_block")
     p.add_argument("--rollout_start_layer", type=int, default=0)
 
@@ -157,6 +168,34 @@ def safe_float(x: Any) -> float | None:
     except Exception:
         return None
 
+def parse_class_name(spec: str, class_to_idx: Dict[str, int]) -> int:
+    spec_str = str(spec).strip()
+    if spec_str.isdigit():
+        idx = int(spec_str)
+        if idx in class_to_idx.values():
+            return idx
+        raise ValueError(f"Class index out of range: {idx}")
+
+    lowered = {name.lower(): idx for name, idx in class_to_idx.items()}
+    key = spec_str.lower()
+    if key in lowered:
+        return lowered[key]
+
+    raise ValueError(f"Unknown class name: {spec}. Allowed: {list(class_to_idx.keys())}")
+
+def build_compare_tag(args: argparse.Namespace) -> str:
+    if args.compare_mode == "fixed":
+        a = (args.A or "A").replace(" ", "_")
+        b = (args.B or "B").replace(" ", "_")
+        return f"fixed_{a}_vs_{b}"
+    if args.compare_mode == "top2":
+        return "top2_model_compare"
+    if args.compare_mode == "pred_topk_non_target":
+        return f"pred_topk_k{int(args.topk_compare)}"
+    if args.compare_mode == "gt_topk_non_target":
+        return f"gt_topk_k{int(args.topk_compare)}"
+    return args.compare_mode.replace(" ", "_")
+
 
 def main() -> None:
     args = parse_args()
@@ -164,6 +203,7 @@ def main() -> None:
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    compare_tag = build_compare_tag(args)
 
     df = pd.read_csv(args.csv, low_memory=False)
     if args.num_samples > 0:
@@ -184,11 +224,11 @@ def main() -> None:
     target_layer = model_raw.blocks[-1].norm1
 
     transform = build_eval_transform()
-
-    conf_metric = ConfidenceDropMetric(
+    rel_conf_metric = RelativeConfidenceDropMetric(
         model=model,
         perturbation_steps=args.perturbation_steps,
     )
+
     del_metric = DeletionMetric(
         model=model,
         num_steps=args.deletion_steps,
@@ -224,10 +264,19 @@ def main() -> None:
             probs = torch.softmax(logits, dim=1)[0].detach().cpu().numpy()
 
         sorted_idx = np.argsort(probs)[::-1]
+        
+        if args.compare_mode == "fixed":
+            if args.A is None or args.B is None:
+                raise ValueError("compare_mode=fixed requires --A and --B")
+            A_idx = parse_class_name(args.A, class_to_idx)
+            B_idx = parse_class_name(args.B, class_to_idx)
+            comparison_categories = [B_idx]
 
-        if args.compare_mode == "pred_topk_non_target":
+        elif args.compare_mode == "pred_topk_non_target":
             A_idx = int(sorted_idx[0])
             comparison_categories = [int(i) for i in sorted_idx if int(i) != A_idx][: max(1, args.topk_compare)]
+            if len(comparison_categories) == 0:
+                raise ValueError(f"Could not find non-target comparison categories for image {image_id}.")
             B_idx = comparison_categories[0]
 
         elif args.compare_mode == "gt_topk_non_target":
@@ -247,7 +296,7 @@ def main() -> None:
         else:
             raise ValueError(
                 f"Unsupported compare_mode for this script: {args.compare_mode}. "
-                "Use one of: top2, pred_topk_non_target, gt_topk_non_target."
+                "Use one of: fixed, top2, pred_topk_non_target, gt_topk_non_target."
             )
 
         bundle = compute_cam_bundle(
@@ -267,49 +316,43 @@ def main() -> None:
         pred_name = class_names[pred_idx]
         pred_prob = safe_float(bundle["probs"][pred_idx])
 
-        compare_idx = int(bundle["B"])
-        compare_name = class_names[compare_idx]
-        compare_prob = safe_float(bundle["probs"][compare_idx])
+        target_idx = int(A_idx)
+        reference_idx = int(B_idx)
+        target_name = class_names[target_idx]
+        reference_name = class_names[reference_idx]
+        target_prob = safe_float(bundle["probs"][target_idx])
+        reference_prob = safe_float(bundle["probs"][reference_idx])
 
         method_specs = [
             {
-                "method": "gradcam_pred",
+                "method": "gradcam_target",
                 "cam": bundle["cam_gradcam"],
-                "target_idx": pred_idx,
-                "target_name": pred_name,
-                "target_prob": pred_prob,
             },
             {
-                "method": "gradcam_compare",
+                "method": "gradcam_reference",
                 "cam": bundle["cam_gradcam_B"],
-                "target_idx": compare_idx,
-                "target_name": compare_name,
-                "target_prob": compare_prob,
             },
             {
                 "method": "finercam",
                 "cam": bundle["cam_finercam"],
-                "target_idx": pred_idx,
-                "target_name": pred_name,
-                "target_prob": pred_prob,
             },
             {
                 "method": "rollout",
                 "cam": bundle["cam_rollout"],
-                "target_idx": pred_idx,
-                "target_name": pred_name,
-                "target_prob": pred_prob,
             },
         ]
 
         for spec in method_specs:
             cam_tensor = to_cam_tensor(spec["cam"], device=device)
-            target_tensor = torch.tensor([spec["target_idx"]], dtype=torch.long, device=device)
+            target_tensor = torch.tensor([target_idx], dtype=torch.long, device=device)
+            reference_indices = comparison_categories if len(comparison_categories) > 0 else [reference_idx]
+            reference_tensor = torch.tensor(reference_indices, dtype=torch.long, device=device)
 
-            conf_res = conf_metric.compute(
+            rel_conf_res = rel_conf_metric.compute(
                 images=image_tensor,
                 cams=cam_tensor,
                 target_classes=target_tensor,
+                reference_classes=reference_tensor,
                 mask_value=args.mask_value,
             )
             del_res = del_metric.compute(
@@ -324,8 +367,14 @@ def main() -> None:
                 target_classes=target_tensor,
             )
 
-            compact = {}
-            compact.update({f"conf_{k}": v for k, v in summarize_metric_dict(conf_res).items()})
+            compact = {
+                "rel_conf_original_target_confidence": rel_conf_res["original_target_confidence"],
+                "rel_conf_original_reference_confidence": rel_conf_res["original_reference_confidence"],
+                "rel_conf_average_target_drop": rel_conf_res["average_target_drop"],
+                "rel_conf_average_reference_drop": rel_conf_res["average_reference_drop"],
+                "rel_conf_average_relative_confidence_drop": rel_conf_res["average_relative_confidence_drop"],
+                "rel_conf_max_relative_confidence_drop": rel_conf_res["max_relative_confidence_drop"],
+            }
             compact.update({f"del_{k}": v for k, v in summarize_metric_dict(del_res).items()})
             compact.update({f"ins_{k}": v for k, v in summarize_metric_dict(ins_res).items()})
 
@@ -337,13 +386,16 @@ def main() -> None:
                 "pred_idx": pred_idx,
                 "pred_name": pred_name,
                 "pred_prob": pred_prob,
-                "compare_idx": compare_idx,
-                "compare_name": compare_name,
-                "compare_prob": compare_prob,
+                "target_idx": target_idx,
+                "target_name": target_name,
+                "target_prob": target_prob,
+                "reference_idx": reference_idx,
+                "reference_name": reference_name,
+                "reference_prob": reference_prob,
+                "comparison_categories": json.dumps([int(i) for i in comparison_categories]),
                 "method": spec["method"],
-                "target_idx": spec["target_idx"],
-                "target_name": spec["target_name"],
-                "target_prob": spec["target_prob"],
+                "compare_mode": args.compare_mode,
+                "compare_tag": compare_tag,
                 **compact,
             }
             per_sample_rows.append(sample_row)
@@ -353,9 +405,14 @@ def main() -> None:
                     "image_id": image_id,
                     "image": image_name,
                     "method": spec["method"],
-                    "target_idx": spec["target_idx"],
-                    "target_name": spec["target_name"],
-                    "confidence_drop": conf_res,
+                    "target_idx": target_idx,
+                    "target_name": target_name,
+                    "comparison_categories": [int(i) for i in comparison_categories],
+                    "reference_idx": reference_idx,
+                    "reference_name": reference_name,
+                    "compare_mode": args.compare_mode,
+                    "compare_tag": compare_tag,
+                    "relative_confidence_drop": rel_conf_res,
                     "deletion": del_res,
                     "insertion": ins_res,
                 }
@@ -364,21 +421,23 @@ def main() -> None:
     per_sample_df = pd.DataFrame(per_sample_rows)
 
     summary_df = (
-        per_sample_df.groupby("method", dropna=False)
+        per_sample_df.groupby(["method", "compare_mode", "compare_tag"], dropna=False)
         .agg(
             n=("image_id", "count"),
-            conf_original=("conf_original_confidence", "mean"),
-            conf_avg_drop=("conf_average_drop", "mean"),
-            conf_rel_drop=("conf_relative_confidence_drop", "mean"),
+            rel_conf_target=("rel_conf_original_target_confidence", "mean"),
+            rel_conf_reference=("rel_conf_original_reference_confidence", "mean"),
+            rel_conf_target_drop=("rel_conf_average_target_drop", "mean"),
+            rel_conf_reference_drop=("rel_conf_average_reference_drop", "mean"),
+            rel_conf_rd=("rel_conf_average_relative_confidence_drop", "mean"),
             del_auc=("del_auc", "mean"),
             ins_auc=("ins_auc", "mean"),
         )
         .reset_index()
     )
 
-    per_sample_csv = out_dir / "per_sample_metrics.csv"
-    summary_csv = out_dir / "per_method_summary.csv"
-    full_json = out_dir / "metrics_full.json"
+    per_sample_csv = out_dir / f"per_sample_metrics__{compare_tag}.csv"
+    summary_csv = out_dir / f"per_method_summary__{compare_tag}.csv"
+    full_json = out_dir / f"metrics_full__{compare_tag}.json"
 
     per_sample_df.to_csv(per_sample_csv, index=False)
     summary_df.to_csv(summary_csv, index=False)
