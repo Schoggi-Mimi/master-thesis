@@ -22,6 +22,19 @@ python -m scripts.generate_finer_cam_panderm \
   --compare_mode pred_topk_non_target \
   --topk_compare 3 \
   --alpha 0.8
+
+
+python -m scripts.generate_finer_cam_panderm \
+  --csv data/HAM10000/ham_test_mel_only.csv \
+  --img_dir data/HAM10000/images \
+  --checkpoint external/weights/checkpoint-best-ham.pth \
+  --class_preset ham \
+  --out_dir outputs/panderm_cam_ham_mel_vs_nv\
+  --method finercam \
+  --compare_mode fixed \
+  --A MEL \
+  --B NV \
+  --alpha 0.8
 """
 
 from __future__ import annotations
@@ -476,6 +489,7 @@ def main() -> None:
             gradcam_diff_overlay=res["overlay_gradcam_diff"],
             finercam_overlay=res["overlay_finercam"],
             rollout_overlay=res["overlay_rollout"],
+            chefer_overlay=res["overlay_chefer"],
             gradcam_a_line1="GradCAM",
             gradcam_a_line2=f"{A_name} ({gradcam_a_prob:.2f})",
             gradcam_b_line1="GradCAM",
@@ -486,10 +500,12 @@ def main() -> None:
             finercam_line2=f"{A_name} vs {B_name} ({finercam_prob:.2f})",
             rollout_line1="Rollout",
             rollout_line2=f"{A_name} ({rollout_prob:.2f})",
+            chefer_line1="Chefer-style",
+            chefer_line2=f"{A_name}",
             scale=args.panel_scale,
         )
 
-        panel_path = out_dir / f"{image_id}_RGB_GradCAMA_GradCAMB_GradCAMDiff_FinerCAM_Rollout.png"
+        panel_path = out_dir / f"{image_id}_RGB_GradCAMA_GradCAMB_GradCAMDiff_FinerCAM_Rollout_CheferStyle.png"
         Image.fromarray(panel_img_uint8).save(panel_path)
 
         if args.save_json:
@@ -521,6 +537,7 @@ def main() -> None:
                 "gradcam_diff_desc": f"max(0, {A_name} - {B_name})",
                 "finercam_prob": finercam_prob,
                 "rollout_prob": rollout_prob,
+                "chefer_desc": "Approximate Chefer-style transformer attribution using positive grad*attention rollout on PanDerm",
             }
             (out_dir / f"{image_id}_meta.json").write_text(json.dumps(meta, indent=2))
 

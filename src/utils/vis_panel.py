@@ -60,6 +60,7 @@ def make_panel_with_subtitles(
     gradcam_diff_overlay: np.ndarray,
     finercam_overlay: np.ndarray,
     rollout_overlay: np.ndarray,
+    chefer_overlay: np.ndarray,
     gradcam_a_line1: str,
     gradcam_a_line2: str,
     gradcam_b_line1: str,
@@ -70,6 +71,8 @@ def make_panel_with_subtitles(
     finercam_line2: str,
     rollout_line1: str,
     rollout_line2: str,
+    chefer_line1: str,
+    chefer_line2: str,
     scale: float = 1.35,
 ) -> np.ndarray:
     rgb_uint8 = _to_uint8_rgb(rgb_float)
@@ -78,6 +81,7 @@ def make_panel_with_subtitles(
     gradcam_diff_uint8 = _to_uint8_rgb(gradcam_diff_overlay)
     finercam_uint8 = _to_uint8_rgb(finercam_overlay)
     rollout_uint8 = _to_uint8_rgb(rollout_overlay)
+    chefer_uint8 = _to_uint8_rgb(chefer_overlay)
 
     tiles = [
         rgb_uint8,
@@ -86,6 +90,7 @@ def make_panel_with_subtitles(
         gradcam_diff_uint8,
         finercam_uint8,
         rollout_uint8,
+        chefer_uint8,
     ]
     subtitle_pairs = [
         (first_tile_line1, first_tile_line2),
@@ -94,6 +99,7 @@ def make_panel_with_subtitles(
         (gradcam_diff_line1, gradcam_diff_line2),
         (finercam_line1, finercam_line2),
         (rollout_line1, rollout_line2),
+        (chefer_line1, chefer_line2),
     ]
 
     h, w, _ = tiles[0].shape

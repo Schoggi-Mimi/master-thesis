@@ -340,6 +340,10 @@ def main() -> None:
                 "method": "rollout",
                 "cam": bundle["cam_rollout"],
             },
+            {
+                "method": "chefer_style",
+                "cam": bundle["cam_chefer"],
+            },
         ]
 
         for spec in method_specs:

@@ -121,6 +121,164 @@ def _run_finercam(
 def _unwrap_model(model: torch.nn.Module) -> torch.nn.Module:
     return model.model if hasattr(model, "model") else model
 
+def _compute_rollout_attention_no_norm(all_layer_matrices: list[torch.Tensor], start_layer: int = 0) -> torch.Tensor:
+    """
+    Chefer-style rollout over per-layer attribution matrices.
+    Adds identity / residual, but does not row-normalize before multiplying.
+    """
+    num_tokens = all_layer_matrices[0].shape[1]
+    batch_size = all_layer_matrices[0].shape[0]
+    eye = torch.eye(num_tokens, device=all_layer_matrices[0].device).unsqueeze(0).expand(batch_size, num_tokens, num_tokens)
+    matrices_aug = [mat + eye for mat in all_layer_matrices]
+    joint_attention = matrices_aug[start_layer]
+    for i in range(start_layer + 1, len(matrices_aug)):
+        joint_attention = matrices_aug[i].bmm(joint_attention)
+    return joint_attention
+
+
+def _compute_attention_probs_and_values(attn_module, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Manual forward for a timm / BEiT-style attention module.
+    Returns attention probabilities of shape (B, H, N, N) and values of shape (B, H, N, D).
+    """
+    bsz, n_tokens, dim = x.shape
+    num_heads = attn_module.num_heads
+    head_dim = dim // num_heads
+
+    if hasattr(attn_module, "q_bias") and hasattr(attn_module, "v_bias") and attn_module.q_bias is not None and attn_module.v_bias is not None:
+        zero_bias = torch.zeros_like(attn_module.v_bias)
+        qkv_bias = torch.cat((attn_module.q_bias, zero_bias, attn_module.v_bias), dim=0)
+        qkv = F.linear(x, attn_module.qkv.weight, qkv_bias)
+    else:
+        qkv = attn_module.qkv(x)
+
+    qkv = qkv.reshape(bsz, n_tokens, 3, num_heads, head_dim).permute(2, 0, 3, 1, 4)
+    q, k, v = qkv[0], qkv[1], qkv[2]
+
+    scale = getattr(attn_module, "scale", head_dim ** -0.5)
+    attn = (q * scale) @ k.transpose(-2, -1)
+
+    if hasattr(attn_module, "relative_position_bias_table") and hasattr(attn_module, "relative_position_index"):
+        table = attn_module.relative_position_bias_table
+        index = attn_module.relative_position_index.view(-1)
+        rel_pos_bias = table[index].view(n_tokens, n_tokens, -1).permute(2, 0, 1)
+        attn = attn + rel_pos_bias.unsqueeze(0)
+
+    attn = attn.softmax(dim=-1)
+    if hasattr(attn_module, "attn_drop"):
+        attn = attn_module.attn_drop(attn)
+
+    return attn, v
+
+
+def _forward_block_with_attention(block, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Manual forward through one transformer block while exposing attention probabilities
+    that keep gradients. This is an approximate Chefer-style path for PanDerm / timm blocks.
+    """
+    attn_input = block.norm1(x)
+    attn_probs, v = _compute_attention_probs_and_values(block.attn, attn_input)
+    attn_probs.retain_grad()
+
+    attn_out = (attn_probs @ v).transpose(1, 2).reshape(x.shape[0], x.shape[1], x.shape[2])
+    attn_out = block.attn.proj(attn_out)
+    if hasattr(block.attn, "proj_drop"):
+        attn_out = block.attn.proj_drop(attn_out)
+
+    if hasattr(block, "gamma_1") and block.gamma_1 is not None:
+        attn_out = block.gamma_1 * attn_out
+    if hasattr(block, "drop_path"):
+        x = x + block.drop_path(attn_out)
+    else:
+        x = x + attn_out
+
+    mlp_out = block.mlp(block.norm2(x))
+    if hasattr(block, "gamma_2") and block.gamma_2 is not None:
+        mlp_out = block.gamma_2 * mlp_out
+    if hasattr(block, "drop_path"):
+        x = x + block.drop_path(mlp_out)
+    else:
+        x = x + mlp_out
+
+    return x, attn_probs
+
+
+def _compute_chefer_like_heatmap(
+    model: torch.nn.Module,
+    input_tensor: torch.Tensor,
+    rgb_float: np.ndarray,
+    target_idx: int,
+    start_layer: int = 0,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Approximate Chefer-style transformer attribution for a timm / PanDerm ViT.
+    This follows the official high-level recipe:
+      1) class-specific backward pass,
+      2) per-layer positive grad * attention,
+      3) rollout across layers,
+    but does not use full relprop because PanDerm is not implemented with custom relprop layers.
+    """
+    base_model = _unwrap_model(model)
+    base_model.zero_grad(set_to_none=True)
+
+    x = base_model.patch_embed(input_tensor)
+    batch_size = x.shape[0]
+
+    if hasattr(base_model, "cls_token") and base_model.cls_token is not None:
+        cls_tokens = base_model.cls_token.expand(batch_size, -1, -1)
+        x = torch.cat((cls_tokens, x), dim=1)
+
+    if hasattr(base_model, "pos_embed") and base_model.pos_embed is not None:
+        x = x + base_model.pos_embed
+
+    if hasattr(base_model, "pos_drop") and base_model.pos_drop is not None:
+        x = base_model.pos_drop(x)
+
+    attn_probs_all = []
+    for block in base_model.blocks:
+        x, attn_probs = _forward_block_with_attention(block, x)
+        attn_probs_all.append(attn_probs)
+
+    if hasattr(base_model, "norm") and base_model.norm is not None:
+        x = base_model.norm(x)
+
+    if hasattr(base_model, "fc_norm") and base_model.fc_norm is not None:
+        pooled = x[:, 1:, :].mean(dim=1)
+        pooled = base_model.fc_norm(pooled)
+    else:
+        pooled = x[:, 0]
+
+    logits = base_model.head(pooled)
+    score = logits[:, int(target_idx)].sum()
+    score.backward(retain_graph=False)
+
+    cams = []
+    for attn_probs in attn_probs_all:
+        grad = attn_probs.grad
+        if grad is None:
+            raise RuntimeError("Attention gradients were not retained for Chefer-style attribution.")
+        cam = (grad * attn_probs).clamp(min=0).mean(dim=1)
+        cams.append(cam)
+
+    rollout = _compute_rollout_attention_no_norm(cams, start_layer=start_layer)
+    cls_rollout = rollout[:, 0, 1:]
+
+    n_patches = cls_rollout.shape[-1]
+    side = int(np.sqrt(n_patches))
+    if side * side != n_patches:
+        raise ValueError(f"Cannot reshape Chefer-style tokens to square map: {n_patches}")
+
+    heatmap_small = cls_rollout[0].reshape(side, side).detach().cpu().numpy()
+    heatmap_small = heatmap_small - heatmap_small.min()
+    heatmap_small = heatmap_small / (heatmap_small.max() + 1e-8)
+
+    rgb_h, rgb_w = rgb_float.shape[:2]
+    heatmap = cv2.resize(heatmap_small, (rgb_w, rgb_h), interpolation=cv2.INTER_CUBIC)
+    heatmap = np.clip(heatmap, 0.0, 1.0)
+
+    overlay = show_cam_on_image(rgb_float, heatmap, use_rgb=True)
+    return heatmap, overlay
+
 
 @torch.no_grad()
 def _compute_attention_map_from_attn_module(attn_module, x: torch.Tensor) -> torch.Tensor:
@@ -255,6 +413,14 @@ def compute_cam_bundle(
         rgb_float=rgb_float,
     )
 
+    cam_chefer, vis_chefer = _compute_chefer_like_heatmap(
+        model=model,
+        input_tensor=input_tensor,
+        rgb_float=rgb_float,
+        target_idx=A,
+        start_layer=0,
+    )
+
     return {
         "A": int(A),
         "B": int(B),
@@ -273,9 +439,11 @@ def compute_cam_bundle(
         "cam_gradcam_diff": cam_diff_grad,
         "cam_finercam": cam_finer,
         "cam_rollout": cam_rollout,
+        "cam_chefer": cam_chefer,
         "overlay_gradcam": vis_A,
         "overlay_gradcam_B": vis_B_grad,
         "overlay_gradcam_diff": vis_diff_grad,
         "overlay_finercam": vis_finer,
         "overlay_rollout": vis_rollout,
+        "overlay_chefer": vis_chefer,
     }
