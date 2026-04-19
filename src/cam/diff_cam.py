@@ -279,6 +279,52 @@ def _compute_chefer_like_heatmap(
     overlay = show_cam_on_image(rgb_float, heatmap, use_rgb=True)
     return heatmap, overlay
 
+def _compute_relprop_chefer_heatmap(
+    relprop_model: torch.nn.Module,
+    input_tensor: torch.Tensor,
+    rgb_float: np.ndarray,
+    target_idx: int,
+    start_layer: int = 0,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Chefer-style transformer attribution computed through the relprop-enabled PanDerm wrapper.
+    This follows the same logic as scripts/test_panderm_chefer_relprop.py.
+    """
+    relprop_model.eval()
+    relprop_model.zero_grad(set_to_none=True)
+
+    logits = relprop_model(input_tensor)
+    one_hot = torch.zeros_like(logits)
+    one_hot[:, int(target_idx)] = 1.0
+
+    target_score = torch.sum(one_hot * logits)
+    target_score.backward(retain_graph=True)
+
+    attribution = relprop_model.relprop(
+        one_hot,
+        method="transformer_attribution",
+        start_layer=start_layer,
+        alpha=1,
+    )
+
+    cls_attr = attribution[0].detach().cpu().numpy()
+    n_patches = cls_attr.shape[0]
+    side = int(np.sqrt(n_patches))
+    if side * side != n_patches:
+        raise ValueError(f"Cannot reshape relprop attribution to square map: {n_patches}")
+
+    heatmap_small = cls_attr.reshape(side, side)
+    heatmap_small = np.maximum(heatmap_small, 0.0)
+    heatmap_small = heatmap_small - heatmap_small.min()
+    heatmap_small = heatmap_small / (heatmap_small.max() + 1e-8)
+
+    rgb_h, rgb_w = rgb_float.shape[:2]
+    heatmap = cv2.resize(heatmap_small, (rgb_w, rgb_h), interpolation=cv2.INTER_CUBIC)
+    heatmap = np.clip(heatmap, 0.0, 1.0)
+
+    overlay = show_cam_on_image(rgb_float, heatmap, use_rgb=True)
+    return heatmap, overlay
+
 
 @torch.no_grad()
 def _compute_attention_map_from_attn_module(attn_module, x: torch.Tensor) -> torch.Tensor:
@@ -370,6 +416,7 @@ def compute_cam_bundle(
     B: Optional[int] = None,
     comparison_categories: Optional[List[int]] = None,
     alpha: float = 0.6,
+    relprop_model: Optional[torch.nn.Module] = None,
 ):
     model.eval()
 
@@ -420,6 +467,44 @@ def compute_cam_bundle(
         target_idx=A,
         start_layer=0,
     )
+    cam_chefer_B, vis_chefer_B = _compute_chefer_like_heatmap(
+        model=model,
+        input_tensor=input_tensor,
+        rgb_float=rgb_float,
+        target_idx=B,
+        start_layer=0,
+    )
+    cam_chefer_diff = np.maximum(cam_chefer - cam_chefer_B, 0.0)
+    cam_chefer_diff = cam_chefer_diff - cam_chefer_diff.min()
+    cam_chefer_diff = cam_chefer_diff / (cam_chefer_diff.max() + 1e-8)
+    vis_chefer_diff = show_cam_on_image(rgb_float, cam_chefer_diff, use_rgb=True)
+
+    cam_relprop_chefer = None
+    vis_relprop_chefer = None
+    cam_relprop_chefer_B = None
+    vis_relprop_chefer_B = None
+    cam_relprop_chefer_diff = None
+    vis_relprop_chefer_diff = None
+
+    if relprop_model is not None:
+        cam_relprop_chefer, vis_relprop_chefer = _compute_relprop_chefer_heatmap(
+            relprop_model=relprop_model,
+            input_tensor=input_tensor,
+            rgb_float=rgb_float,
+            target_idx=A,
+            start_layer=0,
+        )
+        cam_relprop_chefer_B, vis_relprop_chefer_B = _compute_relprop_chefer_heatmap(
+            relprop_model=relprop_model,
+            input_tensor=input_tensor,
+            rgb_float=rgb_float,
+            target_idx=B,
+            start_layer=0,
+        )
+        cam_relprop_chefer_diff = np.maximum(cam_relprop_chefer - cam_relprop_chefer_B, 0.0)
+        cam_relprop_chefer_diff = cam_relprop_chefer_diff - cam_relprop_chefer_diff.min()
+        cam_relprop_chefer_diff = cam_relprop_chefer_diff / (cam_relprop_chefer_diff.max() + 1e-8)
+        vis_relprop_chefer_diff = show_cam_on_image(rgb_float, cam_relprop_chefer_diff, use_rgb=True)
 
     return {
         "A": int(A),
@@ -440,10 +525,20 @@ def compute_cam_bundle(
         "cam_finercam": cam_finer,
         "cam_rollout": cam_rollout,
         "cam_chefer": cam_chefer,
+        "cam_chefer_B": cam_chefer_B,
+        "cam_chefer_diff": cam_chefer_diff,
+        "cam_relprop_chefer": cam_relprop_chefer,
+        "cam_relprop_chefer_B": cam_relprop_chefer_B,
+        "cam_relprop_chefer_diff": cam_relprop_chefer_diff,
         "overlay_gradcam": vis_A,
         "overlay_gradcam_B": vis_B_grad,
         "overlay_gradcam_diff": vis_diff_grad,
         "overlay_finercam": vis_finer,
         "overlay_rollout": vis_rollout,
         "overlay_chefer": vis_chefer,
+        "overlay_chefer_B": vis_chefer_B,
+        "overlay_chefer_diff": vis_chefer_diff,
+        "overlay_relprop_chefer": vis_relprop_chefer,
+        "overlay_relprop_chefer_B": vis_relprop_chefer_B,
+        "overlay_relprop_chefer_diff": vis_relprop_chefer_diff,
     }

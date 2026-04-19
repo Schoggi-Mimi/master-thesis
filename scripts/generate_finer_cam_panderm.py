@@ -77,6 +77,8 @@ PANDERM_CLASSIFICATION_DIR = (REPO_ROOT / "external" / "PanDerm" / "classificati
 if str(PANDERM_CLASSIFICATION_DIR) not in sys.path:
     sys.path.insert(0, str(PANDERM_CLASSIFICATION_DIR))
 
+from external.PanDerm.classification.models.modeling_finetune_relprop import \
+    build_panderm_relprop_from_model
 from models.builder import get_eval_transforms  # type: ignore
 from models.modeling_finetune import \
     panderm_base_patch16_224_finetune  # type: ignore
@@ -163,6 +165,11 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=1.35,
         help="Scale factor used to enlarge the tiles in the saved panel.",
+    )
+    parser.add_argument(
+        "--show_relprop_row",
+        action="store_true",
+        help="If set, add a third row with relprop-Chefer maps. Default: off.",
     )
     return parser.parse_args()
 
@@ -357,6 +364,8 @@ def main() -> None:
         idx_to_class=idx_to_class,
         device=device,
     )
+    relprop_model = build_panderm_relprop_from_model(model_raw).to(device)
+    relprop_model.eval()
     model = PanDermCAMWrapper(model_raw)
 
     image_size = int(info.get("image_size", args.image_size) or args.image_size)
@@ -461,6 +470,7 @@ def main() -> None:
             comparison_categories=comparison_categories,
             reshape_transform=vit_reshape_transform,
             alpha=args.alpha,
+            relprop_model=relprop_model,
         )
 
         top3_idx = np.argsort(res["probs"])[-3:][::-1]
@@ -489,7 +499,12 @@ def main() -> None:
             gradcam_diff_overlay=res["overlay_gradcam_diff"],
             finercam_overlay=res["overlay_finercam"],
             rollout_overlay=res["overlay_rollout"],
-            chefer_overlay=res["overlay_chefer"],
+            chefer_overlay_a=res["overlay_chefer"],
+            chefer_overlay_b=res["overlay_chefer_B"],
+            chefer_diff_overlay=res["overlay_chefer_diff"],
+            relprop_chefer_overlay_a=res["overlay_relprop_chefer"],
+            relprop_chefer_overlay_b=res["overlay_relprop_chefer_B"],
+            relprop_chefer_diff_overlay=res["overlay_relprop_chefer_diff"],
             gradcam_a_line1="GradCAM",
             gradcam_a_line2=f"{A_name} ({gradcam_a_prob:.2f})",
             gradcam_b_line1="GradCAM",
@@ -500,9 +515,20 @@ def main() -> None:
             finercam_line2=f"{A_name} vs {B_name} ({finercam_prob:.2f})",
             rollout_line1="Rollout",
             rollout_line2=f"{A_name} ({rollout_prob:.2f})",
-            chefer_line1="Chefer-style",
-            chefer_line2=f"{A_name}",
+            chefer_a_line1="Chefer-style",
+            chefer_a_line2=f"{A_name}",
+            chefer_b_line1="Chefer-style",
+            chefer_b_line2=f"{B_name}",
+            chefer_diff_line1="Chefer Map Diff",
+            chefer_diff_line2=f"max(0, {A_name} - {B_name})",
+            relprop_chefer_a_line1="Chefer relprop",
+            relprop_chefer_a_line2=f"{A_name}",
+            relprop_chefer_b_line1="Chefer relprop",
+            relprop_chefer_b_line2=f"{B_name}",
+            relprop_chefer_diff_line1="Relprop Map Diff",
+            relprop_chefer_diff_line2=f"max(0, {A_name} - {B_name})",
             scale=args.panel_scale,
+            show_relprop_row=args.show_relprop_row,
         )
 
         panel_path = out_dir / f"{image_id}_RGB_GradCAMA_GradCAMB_GradCAMDiff_FinerCAM_Rollout_CheferStyle.png"
@@ -538,6 +564,12 @@ def main() -> None:
                 "finercam_prob": finercam_prob,
                 "rollout_prob": rollout_prob,
                 "chefer_desc": "Approximate Chefer-style transformer attribution using positive grad*attention rollout on PanDerm",
+                "chefer_b_desc": f"Approximate Chefer-style transformer attribution for {B_name}",
+                "chefer_diff_desc": f"max(0, {A_name} - {B_name}) on Chefer-style maps",
+                "relprop_chefer_desc": "Chefer-style transformer attribution computed through the relprop-enabled PanDerm wrapper",
+                "relprop_chefer_b_desc": f"Chefer-style relprop attribution for {B_name}",
+                "relprop_chefer_diff_desc": f"max(0, {A_name} - {B_name}) on relprop-based Chefer maps",
+                "show_relprop_row": bool(args.show_relprop_row),
             }
             (out_dir / f"{image_id}_meta.json").write_text(json.dumps(meta, indent=2))
 
