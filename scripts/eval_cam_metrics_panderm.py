@@ -29,6 +29,18 @@ python -m scripts.eval_cam_metrics_panderm \
   --topk_compare 2
   --perturbation_steps 0.1
 
+python -m scripts.eval_cam_metrics_panderm \
+  --csv data/HAM10000/ham_test_mel_only.csv \
+  --img_dir data/HAM10000/images \
+  --checkpoint external/weights/checkpoint-best-ham-ha.pth \
+  --class_preset ham \
+  --out_dir outputs/ham_ha_metrics \
+  --num_samples 20 \
+  --compare_mode fixed \
+  --A MEL \
+  --B BKL \
+  --alpha 0.8 \
+  --perturbation_steps 0.1
 """
 
 from __future__ import annotations

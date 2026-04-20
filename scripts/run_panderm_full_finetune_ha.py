@@ -35,10 +35,12 @@ def parse_args():
     parser.add_argument("--image-key", type=str, default="image_rel_path")
     parser.add_argument("--mask-key", type=str, default="mask_rel_path")
     parser.add_argument("--ha-lambda", type=float, default=0.5)
+    parser.add_argument("--init-checkpoint", type=str, default="")
 
     parser.add_argument("--wandb-name", type=str, default="panderm_full_finetune_ham_ha")
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--eval-only", action="store_true")
+    parser.add_argument("--debug-batches", type=int, default=2)
 
     return parser.parse_args()
 
@@ -86,8 +88,15 @@ def main():
         "--image_key", args.image_key,
         "--mask_key", args.mask_key,
         "--ha_lambda", str(args.ha_lambda),
-        "--wandb_name", args.wandb_name,
     ]
+
+    if args.init_checkpoint:
+        cmd.extend(["--init_checkpoint", str(Path(args.init_checkpoint).resolve())])
+
+    cmd.extend([
+        "--debug_batches", str(args.debug_batches),
+        "--wandb_name", args.wandb_name,
+    ])
 
     if args.weights:
         cmd.append("--weights")

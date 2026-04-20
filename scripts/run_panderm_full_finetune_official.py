@@ -60,6 +60,12 @@ def parse_args() -> argparse.Namespace:
         help="Root folder containing the images referenced by the CSV",
     )
     parser.add_argument(
+        "--image-key",
+        type=str,
+        default="image",
+        help="Image column in the CSV",
+    )
+    parser.add_argument(
         "--pretrained-checkpoint",
         type=str,
         required=True,
@@ -212,6 +218,8 @@ def build_train_cmd(
         args.csv_path,
         "--root_path",
         args.root_path,
+        "--image_key",
+        args.image_key,
         "--wandb_name",
         args.wandb_name,
         "--seed",
@@ -254,6 +262,8 @@ def build_eval_cmd(
         args.csv_path,
         "--root_path",
         args.root_path,
+        "--image_key",
+        args.image_key,
         "--wandb_name",
         f"{args.wandb_name}_eval",
         "--seed",
@@ -301,6 +311,7 @@ def main() -> None:
 
     args.csv_path = str(csv_path)
     args.root_path = str(root_path)
+    args.image_key = str(args.image_key)
     args.pretrained_checkpoint = str(pretrained_ckpt)
     args.output_dir = str(output_dir)
 
@@ -316,6 +327,7 @@ def main() -> None:
     print(f"official_script={official_script}")
     print(f"csv_path={csv_path}")
     print(f"root_path={root_path}")
+    print(f"image_key={args.image_key}")
     print(f"pretrained_checkpoint={pretrained_ckpt}")
     print(f"output_dir={output_dir}")
     print(f"model={args.model}")

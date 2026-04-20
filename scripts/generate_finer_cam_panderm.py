@@ -35,6 +35,19 @@ python -m scripts.generate_finer_cam_panderm \
   --A MEL \
   --B NV \
   --alpha 0.8
+
+
+python -m scripts.generate_finer_cam_panderm \
+  --csv data/HAM10000/ham_test_mel_only.csv \
+  --img_dir data/HAM10000/images \
+  --checkpoint external/weights/checkpoint-best-ham-ha.pth \
+  --class_preset ham \
+  --out_dir outputs/ham_ha_mel_vs_bkl\
+  --method finercam \
+  --compare_mode fixed \
+  --A MEL \
+  --B BKL \
+  --alpha 0.8
 """
 
 from __future__ import annotations

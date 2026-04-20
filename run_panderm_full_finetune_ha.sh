@@ -7,8 +7,8 @@
 #SBATCH --mail-type=END,FAIL
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=48G
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=32G
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:rtx4090:1
 #SBATCH --qos=job_gratis
@@ -24,20 +24,21 @@ eval "$(conda shell.bash hook)"
 conda activate thesis
 
 nvidia-smi || true
+python -c "import torch; print('cuda available:', torch.cuda.is_available()); print('device count:', torch.cuda.device_count())"
 
-python -m run_panderm_full_finetune_ha.py \
+python -m run_panderm_full_finetune_ha \
   --panderm-classification-dir ../external/PanDerm/classification \
-  --csv-path ../data/HAM10000/ham_segmentation_overlap_clean.csv \
+  --csv-path ../data/HAM10000/ham_segmentation_overlap.csv \
   --root-path ../data/HAM10000 \
   --pretrained-checkpoint ../external/weights/panderm_bb_data6_checkpoint-499.pth \
   --output-dir ../outputs/panderm_full_finetune/ham_ha \
   --model PanDerm_Base_FT \
   --nb-classes 7 \
-  --batch-size 128 \
-  --epochs 50 \
+  --batch-size 64 \
+  --epochs 20 \
   --lr 5e-4 \
   --weight-decay 0.05 \
-  --warmup-epochs 10 \
+  --warmup-epochs 5 \
   --layer-decay 0.65 \
   --drop-path 0.2 \
   --update-freq 1 \
@@ -47,4 +48,7 @@ python -m run_panderm_full_finetune_ha.py \
   --device cuda \
   --image-key image_rel_path \
   --mask-key mask_rel_path \
-  --ha-lambda 0.5
+  --num-workers 4 \
+  --ha-lambda 0.005 \
+  --init-checkpoint ../outputs/panderm_full_finetune/ham/checkpoint-best.pth \
+  --debug-batches 0
