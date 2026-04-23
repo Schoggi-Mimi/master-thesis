@@ -23,8 +23,8 @@ module load Anaconda3
 eval "$(conda shell.bash hook)"
 conda activate thesis
 
-nvidia-smi || true
-python -c "import torch; print('cuda available:', torch.cuda.is_available()); print('device count:', torch.cuda.device_count())"
+# nvidia-smi || true
+# python -c "import torch; print('cuda available:', torch.cuda.is_available()); print('device count:', torch.cuda.device_count())"
 
 python -m run_panderm_full_finetune_ha \
   --panderm-classification-dir ../external/PanDerm/classification \
@@ -35,10 +35,10 @@ python -m run_panderm_full_finetune_ha \
   --model PanDerm_Base_FT \
   --nb-classes 7 \
   --batch-size 64 \
-  --epochs 20 \
+  --epochs 6 \
   --lr 5e-4 \
   --weight-decay 0.05 \
-  --warmup-epochs 5 \
+  --warmup-epochs 1 \
   --layer-decay 0.65 \
   --drop-path 0.2 \
   --update-freq 1 \
@@ -49,6 +49,8 @@ python -m run_panderm_full_finetune_ha \
   --image-key image_rel_path \
   --mask-key mask_rel_path \
   --num-workers 4 \
-  --ha-lambda 0.005 \
+  --ha-lambda 1.0 \
+  --ha-fp-weight 1.0 \
   --init-checkpoint ../outputs/panderm_full_finetune/ham/checkpoint-best.pth \
-  --debug-batches 0
+  --debug-batches 0  \
+  --ha-loss-type paper_dice

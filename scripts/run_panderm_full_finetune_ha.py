@@ -35,12 +35,14 @@ def parse_args():
     parser.add_argument("--image-key", type=str, default="image_rel_path")
     parser.add_argument("--mask-key", type=str, default="mask_rel_path")
     parser.add_argument("--ha-lambda", type=float, default=0.5)
+    parser.add_argument("--ha-fp-weight", type=float, default=1.0)
     parser.add_argument("--init-checkpoint", type=str, default="")
 
     parser.add_argument("--wandb-name", type=str, default="panderm_full_finetune_ham_ha")
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--eval-only", action="store_true")
     parser.add_argument("--debug-batches", type=int, default=2)
+    parser.add_argument("--ha-loss-type", type=str, default="paper_dice", choices=["paper_dice", "alignment"])
 
     return parser.parse_args()
 
@@ -88,6 +90,8 @@ def main():
         "--image_key", args.image_key,
         "--mask_key", args.mask_key,
         "--ha_lambda", str(args.ha_lambda),
+        "--ha_fp_weight", str(args.ha_fp_weight),
+        "--ha_loss_type", str(args.ha_loss_type),
     ]
 
     if args.init_checkpoint:
