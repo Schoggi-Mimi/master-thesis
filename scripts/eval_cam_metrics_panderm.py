@@ -41,6 +41,34 @@ python -m scripts.eval_cam_metrics_panderm \
   --B BKL \
   --alpha 0.8 \
   --perturbation_steps 0.1
+
+python -m scripts.eval_cam_metrics_panderm \
+  --csv data/HAM10000/ham_test_mel_only.csv  \
+  --img_dir data/HAM10000/images \
+  --checkpoint external/weights/checkpoint-best-seg.pth \
+  --class_preset ham \
+  --out_dir outputs/ham_seg_metrics \
+  --num_samples 20 \
+  --compare_mode pred_topk_non_target \
+  --compare_mode fixed \
+  --A MEL \
+  --B BKL \
+  --alpha 0.8 \
+  --perturbation_steps 0.1
+
+python -m scripts.eval_cam_metrics_panderm \
+  --csv data/HAM10000/ham_segmentation_overlap.csv \
+  --img_dir data/HAM10000/images \
+  --checkpoint outputs/panderm_no_softmask/checkpoint-best-sm0.pth \
+  --class_preset ham \
+  --out_dir outputs/ham_metrics_no_softmask_mel_vs_bkl \
+  --num_samples 20 \
+  --compare_mode fixed \
+  --A MEL \
+  --B BKL \
+  --mask_root data/HAM10000 \
+  --mask_col mask_rel_path \
+  --cam_threshold 0.5
 """
 
 from __future__ import annotations
@@ -134,9 +162,49 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--image_col", type=str, default="image")
     p.add_argument("--label_col", type=str, default="label")
     p.add_argument("--id_col", type=str, default="image_id")
+    
+    p.add_argument("--mask_root", type=str, default=None)
+    p.add_argument("--mask_col", type=str, default="mask_rel_path")
+    p.add_argument("--cam_threshold", type=float, default=0.5)
 
     return p.parse_args()
 
+def load_binary_mask(mask_path: Path, size: tuple[int, int] = (224, 224)) -> np.ndarray:
+    with Image.open(mask_path) as mask_img:
+        mask = mask_img.convert("L")
+    mask_np = np.array(mask).astype(np.float32)
+    if mask_np.max() > 1.0:
+        mask_np = mask_np / 255.0
+    mask_np = cv2.resize(mask_np, size, interpolation=cv2.INTER_NEAREST)
+    return (mask_np > 0.5).astype(np.float32)
+
+
+def compute_mask_overlap_metrics(cam_np: np.ndarray, mask_np: np.ndarray, threshold: float = 0.5) -> Dict[str, float]:
+    cam = cam_np.astype(np.float32)
+    mask = mask_np.astype(np.float32)
+
+    cam = (cam - cam.min()) / (cam.max() - cam.min() + 1e-8)
+    cam_bin = (cam >= threshold).astype(np.float32)
+
+    intersection = float((cam_bin * mask).sum())
+    cam_area = float(cam_bin.sum())
+    mask_area = float(mask.sum())
+    union = float(((cam_bin + mask) > 0).sum())
+
+    dice = (2.0 * intersection + 1e-8) / (cam_area + mask_area + 1e-8)
+    iou = (intersection + 1e-8) / (union + 1e-8)
+    energy_inside = float((cam * mask).sum() / (cam.sum() + 1e-8))
+
+    max_y, max_x = np.unravel_index(int(np.argmax(cam)), cam.shape)
+    pointing_game = float(mask[max_y, max_x] > 0.5)
+
+    return {
+        "mask_dice": dice,
+        "mask_iou": iou,
+        "mask_energy_inside": energy_inside,
+        "mask_pointing_game": pointing_game,
+        "mask_area_fraction": mask_area / float(mask.size),
+    }
 
 def get_device(device_arg: str | None) -> str:
     if device_arg:
@@ -271,6 +339,14 @@ def main() -> None:
         rgb_float = np.array(rgb).astype(np.float32) / 255.0
         rgb_float = cv2.resize(rgb_float, (224, 224), interpolation=cv2.INTER_LINEAR)
 
+        lesion_mask_np = None
+        if args.mask_root is not None and args.mask_col in row and not pd.isna(row[args.mask_col]):
+            mask_path = Path(args.mask_root) / str(row[args.mask_col])
+            if mask_path.exists():
+                lesion_mask_np = load_binary_mask(mask_path, size=(224, 224))
+            else:
+                print(f"[warn] missing mask for {image_id}: {mask_path}")
+
         with torch.no_grad():
             logits = model(image_tensor)
             probs = torch.softmax(logits, dim=1)[0].detach().cpu().numpy()
@@ -394,6 +470,24 @@ def main() -> None:
             compact.update({f"del_{k}": v for k, v in summarize_metric_dict(del_res).items()})
             compact.update({f"ins_{k}": v for k, v in summarize_metric_dict(ins_res).items()})
 
+            if lesion_mask_np is not None:
+                compact.update(
+                    compute_mask_overlap_metrics(
+                        spec["cam"],
+                        lesion_mask_np,
+                        threshold=args.cam_threshold,
+                    )
+                )
+            else:
+                compact.update(
+                    {
+                        "mask_dice": None,
+                        "mask_iou": None,
+                        "mask_energy_inside": None,
+                        "mask_pointing_game": None,
+                        "mask_area_fraction": None,
+                    }
+                )
             sample_row = {
                 "image_id": image_id,
                 "image": image_name,
@@ -447,6 +541,11 @@ def main() -> None:
             rel_conf_rd=("rel_conf_average_relative_confidence_drop", "mean"),
             del_auc=("del_auc", "mean"),
             ins_auc=("ins_auc", "mean"),
+            mask_dice=("mask_dice", "mean"),
+            mask_iou=("mask_iou", "mean"),
+            mask_energy_inside=("mask_energy_inside", "mean"),
+            mask_pointing_game=("mask_pointing_game", "mean"),
+            mask_area_fraction=("mask_area_fraction", "mean"),
         )
         .reset_index()
     )

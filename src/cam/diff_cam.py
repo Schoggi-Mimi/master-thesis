@@ -158,9 +158,10 @@ def _compute_attention_probs_and_values(attn_module, x: torch.Tensor) -> tuple[t
     scale = getattr(attn_module, "scale", head_dim ** -0.5)
     attn = (q * scale) @ k.transpose(-2, -1)
 
-    if hasattr(attn_module, "relative_position_bias_table") and hasattr(attn_module, "relative_position_index"):
-        table = attn_module.relative_position_bias_table
-        index = attn_module.relative_position_index.view(-1)
+    table = getattr(attn_module, "relative_position_bias_table", None)
+    index_tensor = getattr(attn_module, "relative_position_index", None)
+    if table is not None and index_tensor is not None:
+        index = index_tensor.view(-1)
         rel_pos_bias = table[index].view(n_tokens, n_tokens, -1).permute(2, 0, 1)
         attn = attn + rel_pos_bias.unsqueeze(0)
 
@@ -345,9 +346,10 @@ def _compute_attention_map_from_attn_module(attn_module, x: torch.Tensor) -> tor
     scale = getattr(attn_module, "scale", head_dim ** -0.5)
     attn = (q * scale) @ k.transpose(-2, -1)
 
-    if hasattr(attn_module, "relative_position_bias_table") and hasattr(attn_module, "relative_position_index"):
-        table = attn_module.relative_position_bias_table
-        index = attn_module.relative_position_index.view(-1)
+    table = getattr(attn_module, "relative_position_bias_table", None)
+    index_tensor = getattr(attn_module, "relative_position_index", None)
+    if table is not None and index_tensor is not None:
+        index = index_tensor.view(-1)
         rel_pos_bias = table[index].view(n_tokens, n_tokens, -1).permute(2, 0, 1)
         attn = attn + rel_pos_bias.unsqueeze(0)
 

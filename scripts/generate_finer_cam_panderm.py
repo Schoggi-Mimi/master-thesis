@@ -48,6 +48,23 @@ python -m scripts.generate_finer_cam_panderm \
   --A MEL \
   --B BKL \
   --alpha 0.8
+
+python -m scripts.generate_finer_cam_panderm \
+  --csv data/HAM10000/ham_test_mel_only.csv \
+  --img_dir data/HAM10000/images \
+  --checkpoint external/weights/checkpoint-best-cropmask.pth \
+  --class_preset ham \
+  --out_dir outputs/ham_cropmask_mel_vs_bkl \
+  --method finercam \
+  --compare_mode fixed \
+  --A MEL \
+  --B BKL \
+  --alpha 0.8 \
+  --crop_with_mask \
+  --mask_root data/HAM10000 \
+  --mask_col mask_rel_path \
+  --crop_margin 0.25 \
+  --min_crop_frac 0.30
 """
 
 from __future__ import annotations
@@ -93,8 +110,8 @@ if str(PANDERM_CLASSIFICATION_DIR) not in sys.path:
 from external.PanDerm.classification.models.modeling_finetune_relprop import \
     build_panderm_relprop_from_model
 from models.builder import get_eval_transforms  # type: ignore
-from models.modeling_finetune import \
-    panderm_base_patch16_224_finetune  # type: ignore
+from models.modeling_finetune import (  # type: ignore
+    panderm_base_patch16_224_finetune, panderm_large_patch16_224_finetune)
 
 # HAM_CLASSES = ["akiec", "bcc", "bkl", "df", "mel", "nv", "vasc"]
 HAM_CLASSES = ["AKIEC", "BCC", "BKL", "DF", "MEL", "NV", "VASC"]
@@ -184,6 +201,35 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="If set, add a third row with relprop-Chefer maps. Default: off.",
     )
+    parser.add_argument(
+        "--crop_with_mask",
+        action="store_true",
+        help="If set, crop each image around its segmentation mask before CAM generation. Use this for cropmask-trained checkpoints.",
+    )
+    parser.add_argument(
+        "--mask_root",
+        type=str,
+        default=None,
+        help="Root folder used to resolve mask paths when --crop_with_mask is set. Usually data/HAM10000.",
+    )
+    parser.add_argument(
+        "--mask_col",
+        type=str,
+        default="mask_rel_path",
+        help="CSV column containing the mask path when --crop_with_mask is set.",
+    )
+    parser.add_argument(
+        "--crop_margin",
+        type=float,
+        default=0.25,
+        help="Relative crop margin around the lesion mask bbox. Must match cropmask training.",
+    )
+    parser.add_argument(
+        "--min_crop_frac",
+        type=float,
+        default=0.30,
+        help="Minimum crop side as fraction of the shorter image side. Must match cropmask training.",
+    )
     return parser.parse_args()
 
 
@@ -214,8 +260,15 @@ def build_class_maps(class_names: list[str]) -> tuple[dict[str, int], dict[int, 
 
 
 
-def build_panderm_model(num_classes: int) -> torch.nn.Module:
-    model = panderm_base_patch16_224_finetune(
+def build_panderm_model(num_classes: int, variant: str = "base") -> torch.nn.Module:
+    if variant == "base":
+        builder = panderm_base_patch16_224_finetune
+    elif variant == "large":
+        builder = panderm_large_patch16_224_finetune
+    else:
+        raise ValueError(f"Unknown PanDerm variant: {variant}")
+
+    model = builder(
         pretrained=False,
         num_classes=num_classes,
         drop_rate=0.0,
@@ -223,8 +276,10 @@ def build_panderm_model(num_classes: int) -> torch.nn.Module:
         attn_drop_rate=0.0,
         drop_block_rate=None,
         use_mean_pooling=True,
-        init_scale=0.001,
-        use_rel_pos_bias=True,
+        # init_scale=0.001,
+        init_scale=1.0,
+        # use_rel_pos_bias=True,
+        use_rel_pos_bias=False,
         init_values=0.1,
         lin_probe=False,
     )
@@ -251,7 +306,60 @@ def remap_official_finetune_checkpoint_keys(state_dict: dict[str, torch.Tensor])
             remapped[new_key] = remapped[key]
             remapped.pop(key)
 
+    # Checkpoints saved from SoftMaskWrapper or other wrappers prefix the
+    # actual PanDerm keys with "backbone.". The CAM script builds the bare
+    # PanDerm model, so strip this prefix before loading.
+    backbone_keys = [key for key in list(remapped.keys()) if key.startswith("backbone.")]
+    if len(backbone_keys) > 0:
+        for key in backbone_keys:
+            new_key = key.replace("backbone.", "", 1)
+            remapped[new_key] = remapped[key]
+        for key in backbone_keys:
+            remapped.pop(key, None)
+            
     return remapped
+
+
+# --- Begin: helper functions for variant inference ---
+
+def infer_panderm_variant_from_state_dict(state_dict: dict[str, torch.Tensor]) -> str:
+    head_weight = state_dict.get("head.weight")
+    if head_weight is None:
+        head_weight = state_dict.get("backbone.head.weight")
+    if head_weight is not None:
+        in_features = int(head_weight.shape[1])
+        if in_features == 768:
+            return "base"
+        if in_features == 1024:
+            return "large"
+
+    patch_weight = state_dict.get("patch_embed.proj.weight")
+    if patch_weight is None:
+        patch_weight = state_dict.get("backbone.patch_embed.proj.weight")
+    if patch_weight is not None:
+        embed_dim = int(patch_weight.shape[0])
+        if embed_dim == 768:
+            return "base"
+        if embed_dim == 1024:
+            return "large"
+
+    raise ValueError(
+        "Could not infer PanDerm variant from checkpoint. Expected embed/head dim 768 (base) or 1024 (large)."
+    )
+
+
+def infer_variant_from_checkpoint_dict(ckpt: dict) -> tuple[dict[str, torch.Tensor], str, str]:
+    if "model_state_dict" in ckpt:
+        state_dict = ckpt["model_state_dict"]
+        checkpoint_format = "custom_pt"
+    elif "model" in ckpt:
+        state_dict = remap_official_finetune_checkpoint_keys(ckpt["model"])
+        checkpoint_format = "official_pth"
+    else:
+        raise KeyError("Checkpoint must contain either 'model_state_dict' or 'model'.")
+
+    variant = infer_panderm_variant_from_state_dict(state_dict)
+    return state_dict, checkpoint_format, variant
 
 
 
@@ -269,18 +377,12 @@ def load_panderm_finetuned_model(
     if device is None:
         device = get_device(None)
 
-    model = build_panderm_model(num_classes=num_classes)
+    model = None
 
     ckpt = torch.load(checkpoint_path, map_location="cpu")
 
-    if "model_state_dict" in ckpt:
-        state_dict = ckpt["model_state_dict"]
-        checkpoint_format = "custom_pt"
-    elif "model" in ckpt:
-        state_dict = remap_official_finetune_checkpoint_keys(ckpt["model"])
-        checkpoint_format = "official_pth"
-    else:
-        raise KeyError("Checkpoint must contain either 'model_state_dict' or 'model'.")
+    state_dict, checkpoint_format, variant = infer_variant_from_checkpoint_dict(ckpt)
+    model = build_panderm_model(num_classes=num_classes, variant=variant)
 
     state_dict_model = model.state_dict()
     for k in ["head.weight", "head.bias"]:
@@ -302,7 +404,8 @@ def load_panderm_finetuned_model(
     model.eval()
 
     info = {
-        "arch": "PanDerm Base FT",
+        "arch": f"PanDerm {variant.capitalize()} FT",
+        "variant": variant,
         "num_classes": num_classes,
         "checkpoint_name": checkpoint_path.name,
         "checkpoint_format": checkpoint_format,
@@ -356,11 +459,99 @@ def get_image_id(row: pd.Series) -> str:
     raise ValueError("CSV must contain column 'image' or 'isic_id'.")
 
 
+# --- Begin: mask cropping helpers ---
+def _mask_bbox(mask: Image.Image) -> tuple[int, int, int, int]:
+    mask_np = np.array(mask)
+    if mask_np.ndim == 3:
+        mask_np = mask_np[..., 0]
+    mask_bin = mask_np > 0
+
+    if not mask_bin.any():
+        w, h = mask.size
+        return 0, 0, w, h
+
+    ys, xs = np.where(mask_bin)
+    x0 = int(xs.min())
+    x1 = int(xs.max()) + 1
+    y0 = int(ys.min())
+    y1 = int(ys.max()) + 1
+    return x0, y0, x1, y1
+
+
+def _expand_and_square_bbox(
+    bbox: tuple[int, int, int, int],
+    image_size: tuple[int, int],
+    margin: float,
+    min_crop_frac: float,
+) -> tuple[int, int, int, int]:
+    x0, y0, x1, y1 = bbox
+    w_img, h_img = image_size
+
+    box_w = max(1, x1 - x0)
+    box_h = max(1, y1 - y0)
+    cx = 0.5 * (x0 + x1)
+    cy = 0.5 * (y0 + y1)
+
+    side = max(box_w, box_h)
+    side = side * (1.0 + 2.0 * margin)
+    side = max(side, min_crop_frac * min(w_img, h_img))
+    side = min(side, max(w_img, h_img))
+
+    new_x0 = int(round(cx - side / 2.0))
+    new_y0 = int(round(cy - side / 2.0))
+    new_x1 = int(round(cx + side / 2.0))
+    new_y1 = int(round(cy + side / 2.0))
+
+    if new_x0 < 0:
+        new_x1 -= new_x0
+        new_x0 = 0
+    if new_y0 < 0:
+        new_y1 -= new_y0
+        new_y0 = 0
+    if new_x1 > w_img:
+        shift = new_x1 - w_img
+        new_x0 -= shift
+        new_x1 = w_img
+    if new_y1 > h_img:
+        shift = new_y1 - h_img
+        new_y0 -= shift
+        new_y1 = h_img
+
+    new_x0 = max(0, new_x0)
+    new_y0 = max(0, new_y0)
+    new_x1 = min(w_img, new_x1)
+    new_y1 = min(h_img, new_y1)
+
+    if new_x1 <= new_x0 or new_y1 <= new_y0:
+        return 0, 0, w_img, h_img
+
+    return new_x0, new_y0, new_x1, new_y1
+
+
+def crop_image_with_mask(
+    img: Image.Image,
+    mask_path: Path,
+    margin: float,
+    min_crop_frac: float,
+) -> Image.Image:
+    mask = Image.open(mask_path).convert("L")
+    bbox = _mask_bbox(mask)
+    crop_box = _expand_and_square_bbox(
+        bbox=bbox,
+        image_size=img.size,
+        margin=margin,
+        min_crop_frac=min_crop_frac,
+    )
+    return img.crop(crop_box)
+# --- End: mask cropping helpers ---
+
+
 def main() -> None:
     args = parse_args()
 
     csv_path = Path(args.csv)
     img_dir = Path(args.img_dir)
+    mask_root = Path(args.mask_root) if args.mask_root is not None else None
     ckpt_path = Path(args.checkpoint)
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -377,6 +568,7 @@ def main() -> None:
         idx_to_class=idx_to_class,
         device=device,
     )
+    print(f"[info] Loaded {info['arch']} from {ckpt_path.name}")
     relprop_model = build_panderm_relprop_from_model(model_raw).to(device)
     relprop_model.eval()
     model = PanDermCAMWrapper(model_raw)
@@ -396,6 +588,14 @@ def main() -> None:
     target_layer = model_raw.blocks[-1].norm1
 
     df = pd.read_csv(csv_path)
+    if args.crop_with_mask:
+        if mask_root is None:
+            raise ValueError("--crop_with_mask requires --mask_root")
+        if args.mask_col not in df.columns:
+            raise ValueError(
+                f"--crop_with_mask requires mask column '{args.mask_col}' in the CSV. "
+                f"Found columns: {df.columns.tolist()}"
+            )
     if "image" not in df.columns and "isic_id" not in df.columns:
         raise ValueError(f"CSV must contain column 'image' or 'isic_id'. Found: {df.columns.tolist()}")
 
@@ -412,6 +612,23 @@ def main() -> None:
             continue
 
         img = Image.open(img_path).convert("RGB")
+
+        if args.crop_with_mask:
+            mask_value = row[args.mask_col]
+            if pd.isna(mask_value):
+                print(f"[skip] missing mask value for image: {image_id}")
+                continue
+            mask_path = (mask_root / str(mask_value)).resolve()
+            if not mask_path.exists():
+                print(f"[skip] missing mask: {mask_path}")
+                continue
+            img = crop_image_with_mask(
+                img=img,
+                mask_path=mask_path,
+                margin=args.crop_margin,
+                min_crop_frac=args.min_crop_frac,
+            )
+
         x = preprocess(img).unsqueeze(0).to(device)
 
         with torch.no_grad():
@@ -583,6 +800,11 @@ def main() -> None:
                 "relprop_chefer_b_desc": f"Chefer-style relprop attribution for {B_name}",
                 "relprop_chefer_diff_desc": f"max(0, {A_name} - {B_name}) on relprop-based Chefer maps",
                 "show_relprop_row": bool(args.show_relprop_row),
+                "crop_with_mask": bool(args.crop_with_mask),
+                "mask_root": str(mask_root) if mask_root is not None else None,
+                "mask_col": args.mask_col,
+                "crop_margin": float(args.crop_margin),
+                "min_crop_frac": float(args.min_crop_frac),
             }
             (out_dir / f"{image_id}_meta.json").write_text(json.dumps(meta, indent=2))
 
