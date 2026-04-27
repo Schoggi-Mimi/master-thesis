@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, Tuple
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
@@ -245,14 +245,16 @@ def make_panel_with_subtitles(
     first_tile_line1: str,
     first_tile_line2: str,
     rgb_float: np.ndarray,
-    gradcam_overlay_a: np.ndarray,
-    gradcam_overlay_b: np.ndarray,
-    gradcam_diff_overlay: np.ndarray,
-    finercam_overlay: np.ndarray,
-    rollout_overlay: np.ndarray,
-    chefer_overlay_a: np.ndarray,
-    chefer_overlay_b: np.ndarray,
-    chefer_diff_overlay: np.ndarray,
+    seg_gate_overlay: Optional[np.ndarray] = None,
+    gradcam_overlay_a: np.ndarray = None,
+    gradcam_overlay_b: np.ndarray = None,
+    gradcam_diff_overlay: np.ndarray = None,
+    finercam_overlay: np.ndarray = None,
+    gate_weighted_finercam_overlay: Optional[np.ndarray] = None,
+    rollout_overlay: np.ndarray = None,
+    chefer_overlay_a: np.ndarray = None,
+    chefer_overlay_b: np.ndarray = None,
+    chefer_diff_overlay: np.ndarray = None,
     relprop_chefer_overlay_a: Optional[np.ndarray] = None,
     relprop_chefer_overlay_b: Optional[np.ndarray] = None,
     relprop_chefer_diff_overlay: Optional[np.ndarray] = None,
@@ -264,6 +266,8 @@ def make_panel_with_subtitles(
     gradcam_diff_line2: str = "",
     finercam_line1: str = "FinerCAM",
     finercam_line2: str = "",
+    gate_weighted_finercam_line1: str = "Gate weighted FinerCAM",
+    gate_weighted_finercam_line2: str = "FinerCAM × gate",
     rollout_line1: str = "Rollout",
     rollout_line2: str = "",
     chefer_a_line1: str = "Chefer-style",
@@ -278,51 +282,122 @@ def make_panel_with_subtitles(
     relprop_chefer_b_line2: str = "",
     relprop_chefer_diff_line1: str = "Relprop Map Diff",
     relprop_chefer_diff_line2: str = "",
+    seg_gate_line1: str = "Predicted Seg Gate",
+    seg_gate_line2: str = "auxiliary head",
     scale: float = 1.35,
+    show_extra_row: bool = False,
     show_relprop_row: bool = False,
+    panel_items: Optional[list[str]] = None,
 ) -> np.ndarray:
     rgb_uint8 = _to_uint8_rgb(rgb_float)
     gradcam_a_uint8 = _to_uint8_rgb(gradcam_overlay_a)
     gradcam_b_uint8 = _to_uint8_rgb(gradcam_overlay_b)
     gradcam_diff_uint8 = _to_uint8_rgb(gradcam_diff_overlay)
     finercam_uint8 = _to_uint8_rgb(finercam_overlay)
-    rollout_uint8 = _to_uint8_rgb(rollout_overlay)
-    chefer_a_uint8 = _to_uint8_rgb(chefer_overlay_a)
-    chefer_b_uint8 = _to_uint8_rgb(chefer_overlay_b)
-    chefer_diff_uint8 = _to_uint8_rgb(chefer_diff_overlay)
 
-    row1_tiles = [
-        rgb_uint8,
-        gradcam_a_uint8,
-        gradcam_b_uint8,
-        gradcam_diff_uint8,
-        finercam_uint8,
-    ]
-    row1_pairs = [
-        (first_tile_line1, first_tile_line2),
-        (gradcam_a_line1, gradcam_a_line2),
-        (gradcam_b_line1, gradcam_b_line2),
-        (gradcam_diff_line1, gradcam_diff_line2),
-        (finercam_line1, finercam_line2),
-    ]
+    seg_gate_uint8 = None
+    if seg_gate_overlay is not None:
+        seg_gate_uint8 = _to_uint8_rgb(seg_gate_overlay)
 
-    row2_tiles = [
-        rollout_uint8,
-        chefer_a_uint8,
-        chefer_b_uint8,
-        chefer_diff_uint8,
-    ]
-    row2_pairs = [
-        (rollout_line1, rollout_line2),
-        (chefer_a_line1, chefer_a_line2),
-        (chefer_b_line1, chefer_b_line2),
-        (chefer_diff_line1, chefer_diff_line2),
-    ]
+    gate_weighted_finercam_uint8 = None
+    if gate_weighted_finercam_overlay is not None:
+        gate_weighted_finercam_uint8 = _to_uint8_rgb(gate_weighted_finercam_overlay)
+    if panel_items is None:
+        panel_items = ["rgb", "gradcam_a", "gradcam_b", "map_diff", "finercam"]
+    rollout_uint8 = None
+    chefer_a_uint8 = None
+    chefer_b_uint8 = None
+    chefer_diff_uint8 = None
 
-    rows_tiles = [row1_tiles, row2_tiles]
-    rows_pairs = [row1_pairs, row2_pairs]
+    if show_extra_row:
+        if (
+            rollout_overlay is None
+            or chefer_overlay_a is None
+            or chefer_overlay_b is None
+            or chefer_diff_overlay is None
+        ):
+            raise ValueError("show_extra_row=True requires rollout and Chefer overlays.")
+
+        rollout_uint8 = _to_uint8_rgb(rollout_overlay)
+        chefer_a_uint8 = _to_uint8_rgb(chefer_overlay_a)
+        chefer_b_uint8 = _to_uint8_rgb(chefer_overlay_b)
+        chefer_diff_uint8 = _to_uint8_rgb(chefer_diff_overlay)
+
+    # row1_tiles = [rgb_uint8]
+    # row1_pairs = [(first_tile_line1, first_tile_line2)]
+
+    # if seg_gate_uint8 is not None:
+    #     row1_tiles.append(seg_gate_uint8)
+    #     row1_pairs.append((seg_gate_line1, seg_gate_line2))
+
+    # row1_tiles.extend([
+    #     gradcam_a_uint8,
+    #     gradcam_b_uint8,
+    #     gradcam_diff_uint8,
+    #     finercam_uint8,
+    # ])
+    # row1_pairs.extend([
+    #     (gradcam_a_line1, gradcam_a_line2),
+    #     (gradcam_b_line1, gradcam_b_line2),
+    #     (gradcam_diff_line1, gradcam_diff_line2),
+    #     (finercam_line1, finercam_line2),
+    # ])
+    # if gate_weighted_finercam_uint8 is not None:
+    #     row1_tiles.append(gate_weighted_finercam_uint8)
+    #     row1_pairs.append((gate_weighted_finercam_line1, gate_weighted_finercam_line2))
+
+    tile_lookup = {
+        "rgb": (rgb_uint8, first_tile_line1, first_tile_line2),
+        "seg_gate": (seg_gate_uint8, seg_gate_line1, seg_gate_line2),
+        "gradcam_a": (gradcam_a_uint8, gradcam_a_line1, gradcam_a_line2),
+        "gradcam_b": (gradcam_b_uint8, gradcam_b_line1, gradcam_b_line2),
+        "map_diff": (gradcam_diff_uint8, gradcam_diff_line1, gradcam_diff_line2),
+        "finercam": (finercam_uint8, finercam_line1, finercam_line2),
+        "gate_weighted_finercam": (
+            gate_weighted_finercam_uint8,
+            gate_weighted_finercam_line1,
+            gate_weighted_finercam_line2,
+        ),
+    }
+
+    row1_tiles = []
+    row1_pairs = []
+
+    for item in panel_items:
+        tile, line1, line2 = tile_lookup[item]
+
+        if tile is None:
+            raise ValueError(
+                f"Panel item '{item}' was requested, but its image is None. "
+                "Check that you loaded the correct checkpoint type and computed the required map."
+            )
+
+        row1_tiles.append(tile)
+        row1_pairs.append((line1, line2))
+
+    rows_tiles = [row1_tiles]
+    rows_pairs = [row1_pairs]
+
+    if show_extra_row:
+        row2_tiles = [
+            rollout_uint8,
+            chefer_a_uint8,
+            chefer_b_uint8,
+            chefer_diff_uint8,
+        ]
+        row2_pairs = [
+            (rollout_line1, rollout_line2),
+            (chefer_a_line1, chefer_a_line2),
+            (chefer_b_line1, chefer_b_line2),
+            (chefer_diff_line1, chefer_diff_line2),
+        ]
+
+        rows_tiles.append(row2_tiles)
+        rows_pairs.append(row2_pairs)
 
     if show_relprop_row:
+        if not show_extra_row:
+            raise ValueError("show_relprop_row=True requires show_extra_row=True.")
         if (
             relprop_chefer_overlay_a is None
             or relprop_chefer_overlay_b is None

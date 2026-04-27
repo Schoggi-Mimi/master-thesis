@@ -119,7 +119,10 @@ def _run_finercam(
         raise RuntimeError(f"FinerCAM failed with FinerWeightedTarget: {e}") from e
 
 def _unwrap_model(model: torch.nn.Module) -> torch.nn.Module:
-    return model.model if hasattr(model, "model") else model
+    base = model.model if hasattr(model, "model") else model
+    if hasattr(base, "backbone"):
+        return base.backbone
+    return base
 
 def _compute_rollout_attention_no_norm(all_layer_matrices: list[torch.Tensor], start_layer: int = 0) -> torch.Tensor:
     """
@@ -419,6 +422,7 @@ def compute_cam_bundle(
     comparison_categories: Optional[List[int]] = None,
     alpha: float = 0.6,
     relprop_model: Optional[torch.nn.Module] = None,
+    include_extra_maps: bool = False,
 ):
     model.eval()
 
@@ -456,30 +460,40 @@ def compute_cam_bundle(
         alpha=alpha,
     )
 
-    cam_rollout, vis_rollout = _compute_rollout_heatmap(
-        model=model,
-        input_tensor=input_tensor,
-        rgb_float=rgb_float,
-    )
+    cam_rollout = None
+    vis_rollout = None
+    cam_chefer = None
+    vis_chefer = None
+    cam_chefer_B = None
+    vis_chefer_B = None
+    cam_chefer_diff = None
+    vis_chefer_diff = None
 
-    cam_chefer, vis_chefer = _compute_chefer_like_heatmap(
-        model=model,
-        input_tensor=input_tensor,
-        rgb_float=rgb_float,
-        target_idx=A,
-        start_layer=0,
-    )
-    cam_chefer_B, vis_chefer_B = _compute_chefer_like_heatmap(
-        model=model,
-        input_tensor=input_tensor,
-        rgb_float=rgb_float,
-        target_idx=B,
-        start_layer=0,
-    )
-    cam_chefer_diff = np.maximum(cam_chefer - cam_chefer_B, 0.0)
-    cam_chefer_diff = cam_chefer_diff - cam_chefer_diff.min()
-    cam_chefer_diff = cam_chefer_diff / (cam_chefer_diff.max() + 1e-8)
-    vis_chefer_diff = show_cam_on_image(rgb_float, cam_chefer_diff, use_rgb=True)
+    if include_extra_maps:
+        cam_rollout, vis_rollout = _compute_rollout_heatmap(
+            model=model,
+            input_tensor=input_tensor,
+            rgb_float=rgb_float,
+        )
+
+        cam_chefer, vis_chefer = _compute_chefer_like_heatmap(
+            model=model,
+            input_tensor=input_tensor,
+            rgb_float=rgb_float,
+            target_idx=A,
+            start_layer=0,
+        )
+        cam_chefer_B, vis_chefer_B = _compute_chefer_like_heatmap(
+            model=model,
+            input_tensor=input_tensor,
+            rgb_float=rgb_float,
+            target_idx=B,
+            start_layer=0,
+        )
+        cam_chefer_diff = np.maximum(cam_chefer - cam_chefer_B, 0.0)
+        cam_chefer_diff = cam_chefer_diff - cam_chefer_diff.min()
+        cam_chefer_diff = cam_chefer_diff / (cam_chefer_diff.max() + 1e-8)
+        vis_chefer_diff = show_cam_on_image(rgb_float, cam_chefer_diff, use_rgb=True)
 
     cam_relprop_chefer = None
     vis_relprop_chefer = None
@@ -488,7 +502,7 @@ def compute_cam_bundle(
     cam_relprop_chefer_diff = None
     vis_relprop_chefer_diff = None
 
-    if relprop_model is not None:
+    if include_extra_maps and relprop_model is not None:
         cam_relprop_chefer, vis_relprop_chefer = _compute_relprop_chefer_heatmap(
             relprop_model=relprop_model,
             input_tensor=input_tensor,

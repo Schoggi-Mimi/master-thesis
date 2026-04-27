@@ -9,66 +9,35 @@ Outputs:
 Typical usage:
 python -m scripts.eval_cam_metrics_panderm \
   --csv data/HAM10000/ham_test_for_cam.csv \
-  --img_dir data/HAM10000/images \
+  --image_col image_rel_path \
+  --img_dir data/HAM10000 \
   --checkpoint external/weights/checkpoint-best-ham.pth \
+  --checkpoint_model_type panderm \
   --class_preset ham \
-  --out_dir outputs/panderm_cam_metrics_ham \
-  --num_samples 20 \
-  --compare_mode pred_topk_non_target \
-  --topk_compare 
-  --perturbation_steps 0.1
-
-python -m scripts.eval_cam_metrics_panderm \
-  --csv data/BCN20000/bcn_test_for_cam.csv \
-  --img_dir data/BCN20000/images \
-  --checkpoint external/weights/checkpoint-best-bcn.pth \
-  --class_preset bcn \
-  --out_dir outputs/panderm_cam_metrics_bcn \
-  --num_samples 20 \
-  --compare_mode pred_topk_non_target \
-  --topk_compare 2
-  --perturbation_steps 0.1
-
-python -m scripts.eval_cam_metrics_panderm \
-  --csv data/HAM10000/ham_test_mel_only.csv \
-  --img_dir data/HAM10000/images \
-  --checkpoint external/weights/checkpoint-best-ham-ha.pth \
-  --class_preset ham \
-  --out_dir outputs/ham_ha_metrics \
-  --num_samples 20 \
-  --compare_mode fixed \
-  --A MEL \
-  --B BKL \
-  --alpha 0.8 \
-  --perturbation_steps 0.1
-
-python -m scripts.eval_cam_metrics_panderm \
-  --csv data/HAM10000/ham_test_mel_only.csv  \
-  --img_dir data/HAM10000/images \
-  --checkpoint external/weights/checkpoint-best-seg.pth \
-  --class_preset ham \
-  --out_dir outputs/ham_seg_metrics \
-  --num_samples 20 \
-  --compare_mode pred_topk_non_target \
-  --compare_mode fixed \
-  --A MEL \
-  --B BKL \
-  --alpha 0.8 \
-  --perturbation_steps 0.1
-
-python -m scripts.eval_cam_metrics_panderm \
-  --csv data/HAM10000/ham_segmentation_overlap.csv \
-  --img_dir data/HAM10000/images \
-  --checkpoint outputs/panderm_no_softmask/checkpoint-best-sm0.pth \
-  --class_preset ham \
-  --out_dir outputs/ham_metrics_no_softmask_mel_vs_bkl \
-  --num_samples 20 \
-  --compare_mode fixed \
-  --A MEL \
-  --B BKL \
+  --out_dir outputs/metrics_baseline \
+  --num_samples 200 \
+  --compare_mode gt_topk_non_target \
+  --topk_compare 3 \
   --mask_root data/HAM10000 \
   --mask_col mask_rel_path \
-  --cam_threshold 0.5
+  --methods gradcam_target,finercam
+
+python -m scripts.eval_cam_metrics_panderm \
+  --csv data/HAM10000/ham_test_for_cam.csv \
+  --image_col image_rel_path \
+  --img_dir data/HAM10000 \
+  --checkpoint external/weights/checkpoint-best-seggate.pth \
+  --checkpoint_model_type seggate \
+  --use_seg_gate \
+  --seg_gate_bg_keep 0.15 \
+  --class_preset ham \
+  --out_dir outputs/metrics_seggate_bg015 \
+  --num_samples 200 \
+  --compare_mode gt_topk_non_target \
+  --topk_compare 3 \
+  --mask_root data/HAM10000 \
+  --mask_col mask_rel_path \
+  --methods gradcam_target,finercam,pred_seg_gate,gate_weighted_finercam
 """
 
 from __future__ import annotations
@@ -107,6 +76,7 @@ warnings.filterwarnings(
 from scripts.generate_finer_cam_panderm import (PanDermCAMWrapper,
                                                 build_class_maps,
                                                 load_panderm_finetuned_model,
+                                                make_gate_weighted_cam_overlay,
                                                 resolve_class_names,
                                                 vit_reshape_transform)
 from src.cam.diff_cam import compute_cam_bundle
@@ -120,6 +90,37 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--csv", type=str, required=True)
     p.add_argument("--img_dir", type=str, required=True)
     p.add_argument("--checkpoint", type=str, required=True)
+    p.add_argument(
+        "--checkpoint_model_type",
+        type=str,
+        default="auto",
+        choices=["auto", "panderm", "multitask", "seggate"],
+        help="Checkpoint loading mode. Use seggate for segmentation-gated multitask checkpoints.",
+    )
+    p.add_argument(
+        "--use_seg_gate",
+        action="store_true",
+        default=False,
+        help="Use the segmentation-gated classification path for multitask/seggate checkpoints.",
+    )
+    p.add_argument(
+        "--seg_gate_bg_keep",
+        type=float,
+        default=0.15,
+        help="Background keep value used by the segmentation gate. Must match training.",
+    )
+    p.add_argument(
+        "--seg_gate_detach",
+        action="store_true",
+        default=True,
+        help="Detach segmentation probability before gating. Should match training.",
+    )
+    p.add_argument(
+        "--seg_gate_no_detach",
+        action="store_false",
+        dest="seg_gate_detach",
+        help="Do not detach segmentation probability before gating.",
+    )
     p.add_argument("--class_preset", type=str, required=True, choices=["ham", "bcn"])
     p.add_argument(
         "--class_names",
@@ -147,6 +148,23 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--A", type=str, default=None, help="Fixed target class name for compare_mode=fixed.")
     p.add_argument("--B", type=str, default=None, help="Fixed reference class name for compare_mode=fixed.")
     p.add_argument("--cam_target_layer", type=str, default="last_block")
+    p.add_argument(
+        "--methods",
+        type=str,
+        default="gradcam_target,finercam",
+        help=(
+            "Comma-separated CAM maps to evaluate. "
+            "Default: gradcam_target,finercam. "
+            "Options: gradcam_target,gradcam_reference,gradcam_diff,finercam,"
+            "pred_seg_gate,gate_weighted_finercam,rollout,chefer_style."
+        ),
+    )
+    p.add_argument(
+        "--include_extra_maps",
+        action="store_true",
+        default=False,
+        help="Compute rollout/Chefer maps. Off by default because these can fail for wrapped SegGate models.",
+    )
     p.add_argument("--rollout_start_layer", type=int, default=0)
 
     p.add_argument("--deletion_steps", type=int, default=100)
@@ -276,6 +294,51 @@ def build_compare_tag(args: argparse.Namespace) -> str:
         return f"gt_topk_k{int(args.topk_compare)}"
     return args.compare_mode.replace(" ", "_")
 
+def parse_methods(methods_arg: str) -> list[str]:
+    allowed = {
+        "gradcam_target",
+        "gradcam_reference",
+        "gradcam_diff",
+        "finercam",
+        "pred_seg_gate",
+        "gate_weighted_finercam",
+        "rollout",
+        "chefer_style",
+    }
+
+    methods = [m.strip() for m in str(methods_arg).split(",") if m.strip()]
+    if not methods:
+        raise ValueError("--methods produced an empty method list.")
+
+    unknown = [m for m in methods if m not in allowed]
+    if unknown:
+        raise ValueError(f"Unknown methods in --methods: {unknown}. Allowed: {sorted(allowed)}")
+
+    return methods
+
+
+def get_cam_target_layer(model_raw: torch.nn.Module):
+    if hasattr(model_raw, "backbone"):
+        return model_raw.backbone.blocks[-1].norm1
+    return model_raw.blocks[-1].norm1
+
+
+@torch.no_grad()
+def predict_seg_gate_map_for_metrics(
+    model_raw: torch.nn.Module,
+    input_tensor: torch.Tensor,
+    image_size: tuple[int, int] = (224, 224),
+) -> np.ndarray | None:
+    if not hasattr(model_raw, "predict_seg_gate_map"):
+        return None
+
+    seg_prob = model_raw.predict_seg_gate_map(input_tensor)
+    seg_map_small = seg_prob[0, 0].detach().cpu().numpy().astype(np.float32)
+
+    seg_map = cv2.resize(seg_map_small, image_size, interpolation=cv2.INTER_CUBIC)
+    seg_map = np.clip(seg_map, 0.0, 1.0)
+
+    return seg_map
 
 def main() -> None:
     args = parse_args()
@@ -284,6 +347,14 @@ def main() -> None:
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     compare_tag = build_compare_tag(args)
+
+    requested_methods = parse_methods(args.methods)
+
+    needs_extra_maps = any(m in requested_methods for m in ["rollout", "chefer_style"])
+    if needs_extra_maps and not args.include_extra_maps:
+        raise ValueError(
+            "Requested rollout or chefer_style in --methods, but --include_extra_maps is not set."
+        )
 
     df = pd.read_csv(args.csv, low_memory=False)
     if args.num_samples > 0:
@@ -298,10 +369,14 @@ def main() -> None:
         class_to_idx=class_to_idx,
         idx_to_class=idx_to_class,
         device=device,
+        checkpoint_model_type=args.checkpoint_model_type,
+        use_seg_gate=args.use_seg_gate,
+        seg_gate_bg_keep=args.seg_gate_bg_keep,
+        seg_gate_detach=args.seg_gate_detach,
     )
     model = PanDermCAMWrapper(model_raw)
     model.eval()
-    target_layer = model_raw.blocks[-1].norm1
+    target_layer = get_cam_target_layer(model_raw)
 
     transform = build_eval_transform()
     rel_conf_metric = RelativeConfidenceDropMetric(
@@ -398,7 +473,32 @@ def main() -> None:
             B=B_idx,
             comparison_categories=comparison_categories,
             alpha=args.alpha,
+            include_extra_maps=args.include_extra_maps,
         )
+
+        pred_seg_gate_cam = None
+        gate_weighted_finercam_cam = None
+
+        if "pred_seg_gate" in requested_methods or "gate_weighted_finercam" in requested_methods:
+            pred_seg_gate_cam = predict_seg_gate_map_for_metrics(
+                model_raw=model_raw,
+                input_tensor=image_tensor,
+                image_size=(224, 224),
+            )
+
+            if pred_seg_gate_cam is None:
+                raise ValueError(
+                    "Requested pred_seg_gate or gate_weighted_finercam, "
+                    "but the loaded model does not expose predict_seg_gate_map(). "
+                    "Use these methods only with --checkpoint_model_type multitask or seggate."
+                )
+
+        if "gate_weighted_finercam" in requested_methods:
+            gate_weighted_finercam_cam, _ = make_gate_weighted_cam_overlay(
+                cam_map=bundle["cam_finercam"],
+                gate_map=pred_seg_gate_cam,
+                rgb_float=rgb_float,
+            )
 
         pred_idx = int(np.argmax(bundle["probs"]))
         pred_name = class_names[pred_idx]
@@ -411,28 +511,30 @@ def main() -> None:
         target_prob = safe_float(bundle["probs"][target_idx])
         reference_prob = safe_float(bundle["probs"][reference_idx])
 
-        method_specs = [
-            {
-                "method": "gradcam_target",
-                "cam": bundle["cam_gradcam"],
-            },
-            {
-                "method": "gradcam_reference",
-                "cam": bundle["cam_gradcam_B"],
-            },
-            {
-                "method": "finercam",
-                "cam": bundle["cam_finercam"],
-            },
-            {
-                "method": "rollout",
-                "cam": bundle["cam_rollout"],
-            },
-            {
-                "method": "chefer_style",
-                "cam": bundle["cam_chefer"],
-            },
-        ]
+        cam_lookup = {
+            "gradcam_target": bundle.get("cam_gradcam"),
+            "gradcam_reference": bundle.get("cam_gradcam_B"),
+            "gradcam_diff": bundle.get("cam_diff"),
+            "finercam": bundle.get("cam_finercam"),
+            "pred_seg_gate": pred_seg_gate_cam,
+            "gate_weighted_finercam": gate_weighted_finercam_cam,
+            "rollout": bundle.get("cam_rollout"),
+            "chefer_style": bundle.get("cam_chefer"),
+        }
+
+        method_specs = []
+        for method_name in requested_methods:
+            cam_value = cam_lookup.get(method_name)
+            if cam_value is None:
+                print(f"[warn] skipping method={method_name} for image={image_id} because CAM is None")
+                continue
+
+            method_specs.append(
+                {
+                    "method": method_name,
+                    "cam": cam_value,
+                }
+            )
 
         for spec in method_specs:
             cam_tensor = to_cam_tensor(spec["cam"], device=device)
@@ -522,6 +624,10 @@ def main() -> None:
                     "reference_name": reference_name,
                     "compare_mode": args.compare_mode,
                     "compare_tag": compare_tag,
+                    "checkpoint_model_type": info.get("checkpoint_model_type"),
+                    "use_seg_gate": info.get("use_seg_gate"),
+                    "seg_gate_bg_keep": info.get("seg_gate_bg_keep"),
+                    "methods_requested": requested_methods,
                     "relative_confidence_drop": rel_conf_res,
                     "deletion": del_res,
                     "insertion": ins_res,
@@ -534,18 +640,42 @@ def main() -> None:
         per_sample_df.groupby(["method", "compare_mode", "compare_tag"], dropna=False)
         .agg(
             n=("image_id", "count"),
-            rel_conf_target=("rel_conf_original_target_confidence", "mean"),
-            rel_conf_reference=("rel_conf_original_reference_confidence", "mean"),
-            rel_conf_target_drop=("rel_conf_average_target_drop", "mean"),
-            rel_conf_reference_drop=("rel_conf_average_reference_drop", "mean"),
-            rel_conf_rd=("rel_conf_average_relative_confidence_drop", "mean"),
-            del_auc=("del_auc", "mean"),
-            ins_auc=("ins_auc", "mean"),
-            mask_dice=("mask_dice", "mean"),
-            mask_iou=("mask_iou", "mean"),
-            mask_energy_inside=("mask_energy_inside", "mean"),
-            mask_pointing_game=("mask_pointing_game", "mean"),
-            mask_area_fraction=("mask_area_fraction", "mean"),
+
+            rel_conf_target_mean=("rel_conf_original_target_confidence", "mean"),
+            rel_conf_target_std=("rel_conf_original_target_confidence", "std"),
+
+            rel_conf_reference_mean=("rel_conf_original_reference_confidence", "mean"),
+            rel_conf_reference_std=("rel_conf_original_reference_confidence", "std"),
+
+            rel_conf_target_drop_mean=("rel_conf_average_target_drop", "mean"),
+            rel_conf_target_drop_std=("rel_conf_average_target_drop", "std"),
+
+            rel_conf_reference_drop_mean=("rel_conf_average_reference_drop", "mean"),
+            rel_conf_reference_drop_std=("rel_conf_average_reference_drop", "std"),
+
+            rel_conf_rd_mean=("rel_conf_average_relative_confidence_drop", "mean"),
+            rel_conf_rd_std=("rel_conf_average_relative_confidence_drop", "std"),
+
+            del_auc_mean=("del_auc", "mean"),
+            del_auc_std=("del_auc", "std"),
+
+            ins_auc_mean=("ins_auc", "mean"),
+            ins_auc_std=("ins_auc", "std"),
+
+            mask_dice_mean=("mask_dice", "mean"),
+            mask_dice_std=("mask_dice", "std"),
+
+            mask_iou_mean=("mask_iou", "mean"),
+            mask_iou_std=("mask_iou", "std"),
+
+            mask_energy_inside_mean=("mask_energy_inside", "mean"),
+            mask_energy_inside_std=("mask_energy_inside", "std"),
+
+            mask_pointing_game_mean=("mask_pointing_game", "mean"),
+            mask_pointing_game_std=("mask_pointing_game", "std"),
+
+            mask_area_fraction_mean=("mask_area_fraction", "mean"),
+            mask_area_fraction_std=("mask_area_fraction", "std"),
         )
         .reset_index()
     )
@@ -564,7 +694,7 @@ def main() -> None:
     print(f"- {per_sample_csv}")
     print(f"- {summary_csv}")
     print(f"- {full_json}")
-    print("\nPer-method summary:")
+    print("\nPer-method summary with mean/std:")
     print(summary_df.to_string(index=False))
 
 

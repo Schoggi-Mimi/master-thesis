@@ -1,70 +1,36 @@
 """
 python -m scripts.generate_finer_cam_panderm \
-  --csv data/HAM10000/ham_test_for_cam.csv \
-  --img_dir data/HAM10000/images \
-  --checkpoint external/weights/checkpoint-best-ham.pth \
-  --class_preset ham \
-  --out_dir outputs/panderm_cam_ham \
-  --num_samples 20 \
-  --method finercam \
-  --compare_mode pred_topk_non_target \
-  --topk_compare 3 \
-  --alpha 0.8
-
-python -m scripts.generate_finer_cam_panderm \
-  --csv data/BCN20000/bcn_test_for_cam.csv \
-  --img_dir data/BCN20000/images \
-  --checkpoint external/weights/checkpoint-best-bcn.pth \
-  --class_preset bcn \
-  --out_dir outputs/panderm_cam_bcn \
-  --num_samples 20 \
-  --method finercam \
-  --compare_mode pred_topk_non_target \
-  --topk_compare 3 \
-  --alpha 0.8
-
-
-python -m scripts.generate_finer_cam_panderm \
   --csv data/HAM10000/ham_test_mel_only.csv \
-  --img_dir data/HAM10000/images \
+  --image_col image_rel_path \
+  --img_dir data/HAM10000 \
   --checkpoint external/weights/checkpoint-best-ham.pth \
+  --checkpoint_model_type panderm \
   --class_preset ham \
-  --out_dir outputs/panderm_cam_ham_mel_vs_nv\
+  --out_dir outputs/ham_baseline_cam_mel_vs_nv \
+  --num_samples 20 \
   --method finercam \
   --compare_mode fixed \
   --A MEL \
   --B NV \
   --alpha 0.8
 
-
 python -m scripts.generate_finer_cam_panderm \
   --csv data/HAM10000/ham_test_mel_only.csv \
-  --img_dir data/HAM10000/images \
-  --checkpoint external/weights/checkpoint-best-ham-ha.pth \
+  --image_col image_rel_path \
+  --img_dir data/HAM10000 \
+  --checkpoint external/weights/checkpoint-best-seggate.pth \
+  --checkpoint_model_type seggate \
+  --use_seg_gate \
+  --seg_gate_bg_keep 0.15 \
   --class_preset ham \
-  --out_dir outputs/ham_ha_mel_vs_bkl\
+  --out_dir outputs/ham_seggate_cam_mel_vs_nv \
+  --num_samples 20 \
   --method finercam \
   --compare_mode fixed \
   --A MEL \
-  --B BKL \
-  --alpha 0.8
-
-python -m scripts.generate_finer_cam_panderm \
-  --csv data/HAM10000/ham_test_mel_only.csv \
-  --img_dir data/HAM10000/images \
-  --checkpoint external/weights/checkpoint-best-cropmask.pth \
-  --class_preset ham \
-  --out_dir outputs/ham_cropmask_mel_vs_bkl \
-  --method finercam \
-  --compare_mode fixed \
-  --A MEL \
-  --B BKL \
+  --B NV \
   --alpha 0.8 \
-  --crop_with_mask \
-  --mask_root data/HAM10000 \
-  --mask_col mask_rel_path \
-  --crop_margin 0.25 \
-  --min_crop_frac 0.30
+  --panel_items rgb,seg_gate,gradcam_a,gradcam_b,map_diff,finercam,gate_weighted_finercam
 """
 
 from __future__ import annotations
@@ -137,8 +103,57 @@ CLASS_PRESETS = {
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate RGB / A / B / Finer-CAM panels for a fine-tuned PanDerm checkpoint.")
     parser.add_argument("--csv", type=str, required=True, help="Path to CSV with column 'image' or 'isic_id'.")
+    parser.add_argument(
+        "--image_col",
+        type=str,
+        default=None,
+        help="Optional image column name. Use this for multitask CSVs, e.g. image_rel_path.",
+    )
     parser.add_argument("--img_dir", type=str, required=True, help="Folder containing JPG images.")
+    parser.add_argument(
+        "--gt_col",
+        type=str,
+        default=None,
+        help="Optional ground-truth label column, e.g. dx or label.",
+    )
     parser.add_argument("--checkpoint", type=str, required=True, help="Path to PanDerm fine-tuned .pt checkpoint.")
+    parser.add_argument(
+        "--checkpoint_model_type",
+        type=str,
+        default="auto",
+        choices=["auto", "panderm", "multitask", "seggate"],
+        help=(
+            "How to load the checkpoint. "
+            "panderm loads a normal PanDerm classifier. "
+            "multitask loads the classification + segmentation wrapper without gating. "
+            "seggate loads the classification + segmentation wrapper with segmentation gating. "
+            "auto detects seg_head keys and uses multitask unless --use_seg_gate is passed."
+        ),
+    )
+    parser.add_argument(
+        "--use_seg_gate",
+        action="store_true",
+        default=False,
+        help="Use the segmentation-gated classification path when loading a multitask/seggate checkpoint.",
+    )
+    parser.add_argument(
+        "--seg_gate_bg_keep",
+        type=float,
+        default=0.15,
+        help="Background keep value used by the segmentation gate. Must match training.",
+    )
+    parser.add_argument(
+        "--seg_gate_detach",
+        action="store_true",
+        default=True,
+        help="Detach segmentation probability before gating. This should match the training setting.",
+    )
+    parser.add_argument(
+        "--seg_gate_no_detach",
+        action="store_false",
+        dest="seg_gate_detach",
+        help="Do not detach segmentation probability before gating.",
+    )
     parser.add_argument(
         "--class_preset",
         type=str,
@@ -202,6 +217,24 @@ def parse_args() -> argparse.Namespace:
         help="If set, add a third row with relprop-Chefer maps. Default: off.",
     )
     parser.add_argument(
+        "--show_extra_rows",
+        action="store_true",
+        default=False,
+        help="If set, also compute and show Rollout and Chefer-style rows. Default: off, only RGB/GradCAM/FinerCAM row is generated.",
+    )
+    parser.add_argument(
+        "--panel_items",
+        type=str,
+        default="rgb,gradcam_a,gradcam_b,map_diff,finercam",
+        help=(
+            "Comma-separated first-row panel items. "
+            "Default: rgb,gradcam_a,gradcam_b,map_diff,finercam. "
+            "Options: rgb,seg_gate,gradcam_a,gradcam_b,map_diff,finercam,gate_weighted_finercam. "
+            "For SegGate visualizations, use: "
+            "rgb,seg_gate,gradcam_a,gradcam_b,map_diff,finercam,gate_weighted_finercam."
+        ),
+    )
+    parser.add_argument(
         "--crop_with_mask",
         action="store_true",
         help="If set, crop each image around its segmentation mask before CAM generation. Use this for cropmask-trained checkpoints.",
@@ -258,6 +291,43 @@ def build_class_maps(class_names: list[str]) -> tuple[dict[str, int], dict[int, 
     idx_to_class = {i: name for i, name in enumerate(class_names)}
     return class_to_idx, idx_to_class
 
+def resolve_gt_label_from_row(row, class_names, class_to_idx, gt_col=None):
+    if gt_col is None:
+        gt_col = "gt_label"
+
+    if gt_col not in row:
+        raise ValueError(f"Ground-truth column '{gt_col}' not found.")
+
+    raw_gt = row[gt_col]
+
+    if pd.isna(raw_gt):
+        raise ValueError(f"Ground-truth value in column '{gt_col}' is NaN.")
+
+    # Numeric label, e.g. label=2
+    if isinstance(raw_gt, (int, np.integer)) or (
+        isinstance(raw_gt, float) and float(raw_gt).is_integer()
+    ):
+        idx = int(raw_gt)
+        return class_names[idx]
+
+    gt = str(raw_gt).strip()
+
+    # Direct match, e.g. BKL
+    if gt in class_to_idx:
+        return gt
+
+    # Case-insensitive match, e.g. bkl -> BKL
+    gt_upper = gt.upper()
+    upper_to_name = {name.upper(): name for name in class_names}
+    if gt_upper in upper_to_name:
+        return upper_to_name[gt_upper]
+
+    gt_lower = gt.lower()
+    lower_to_name = {name.lower(): name for name in class_names}
+    if gt_lower in lower_to_name:
+        return lower_to_name[gt_lower]
+
+    raise ValueError(f"Could not map ground-truth value '{gt}' to {class_names}.")
 
 
 def build_panderm_model(num_classes: int, variant: str = "base") -> torch.nn.Module:
@@ -284,6 +354,110 @@ def build_panderm_model(num_classes: int, variant: str = "base") -> torch.nn.Mod
         lin_probe=False,
     )
     return model
+
+
+# ---- Begin: Multitask/SegGate wrappers and helpers ----
+
+
+class PatchSegHead(torch.nn.Module):
+    def __init__(self, embed_dim: int, hidden_dim: int | None = None):
+        super().__init__()
+        hidden_dim = hidden_dim or max(embed_dim // 2, 128)
+        self.head = torch.nn.Sequential(
+            torch.nn.LayerNorm(embed_dim),
+            torch.nn.Linear(embed_dim, hidden_dim),
+            torch.nn.GELU(),
+            torch.nn.Linear(hidden_dim, 1),
+        )
+
+    def forward(self, patch_tokens: torch.Tensor, patch_hw: tuple[int, int]) -> torch.Tensor:
+        b, n, _ = patch_tokens.shape
+        h, w = patch_hw
+        if n != h * w:
+            raise ValueError(f"patch token count {n} does not match patch grid {h}x{w}")
+        return self.head(patch_tokens).transpose(1, 2).reshape(b, 1, h, w)
+
+
+class PanDermMultitaskSegCAMWrapper(torch.nn.Module):
+    def __init__(
+        self,
+        backbone: torch.nn.Module,
+        use_seg_gate: bool = False,
+        seg_gate_bg_keep: float = 0.15,
+        seg_gate_detach: bool = True,
+    ):
+        super().__init__()
+        self.backbone = backbone
+        self.seg_head = PatchSegHead(embed_dim=backbone.embed_dim)
+        self.use_seg_gate = use_seg_gate
+        self.seg_gate_bg_keep = seg_gate_bg_keep
+        self.seg_gate_detach = seg_gate_detach
+
+    def classify_from_patch_tokens(self, patch_tokens: torch.Tensor) -> torch.Tensor:
+        if hasattr(self.backbone, "fc_norm") and self.backbone.fc_norm is not None:
+            pooled = patch_tokens.mean(dim=1)
+            pooled = self.backbone.fc_norm(pooled)
+        elif hasattr(self.backbone, "norm") and self.backbone.norm is not None:
+            pooled = patch_tokens.mean(dim=1)
+            pooled = self.backbone.norm(pooled)
+        else:
+            pooled = patch_tokens.mean(dim=1)
+        return self.backbone.head(pooled)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        outputs = self.backbone(x, return_patch_tokens=True)
+        if isinstance(outputs, dict):
+            raw_logits = outputs.get("logits")
+            patch_tokens = outputs.get("patch_tokens")
+        elif isinstance(outputs, (tuple, list)):
+            raw_logits = outputs[0]
+            patch_tokens = outputs[1] if len(outputs) > 1 else None
+        else:
+            raw_logits = outputs
+            patch_tokens = None
+
+        if patch_tokens is None:
+            raise ValueError(
+                "The PanDerm backbone did not return patch tokens. "
+                "Cannot generate CAM for multitask/seggate checkpoint."
+            )
+
+        patch_hw = self.backbone.patch_embed.patch_shape
+        seg_logits = self.seg_head(patch_tokens, patch_hw)
+
+        if not self.use_seg_gate:
+            return raw_logits
+
+        seg_prob = torch.sigmoid(seg_logits)
+        if self.seg_gate_detach:
+            seg_prob = seg_prob.detach()
+
+        b, _, h, w = seg_prob.shape
+        gate = seg_prob.reshape(b, 1, h * w).transpose(1, 2)
+        gate = self.seg_gate_bg_keep + (1.0 - self.seg_gate_bg_keep) * gate
+        gated_patch_tokens = patch_tokens * gate
+        return self.classify_from_patch_tokens(gated_patch_tokens)
+
+    @torch.no_grad()
+    def predict_seg_gate_map(self, x: torch.Tensor) -> torch.Tensor:
+        outputs = self.backbone(x, return_patch_tokens=True)
+        if isinstance(outputs, dict):
+            patch_tokens = outputs.get("patch_tokens")
+        elif isinstance(outputs, (tuple, list)):
+            patch_tokens = outputs[1] if len(outputs) > 1 else None
+        else:
+            patch_tokens = None
+
+        if patch_tokens is None:
+            raise ValueError("The PanDerm backbone did not return patch tokens. Cannot predict segmentation gate.")
+
+        patch_hw = self.backbone.patch_embed.patch_shape
+        seg_logits = self.seg_head(patch_tokens, patch_hw)
+        seg_prob = torch.sigmoid(seg_logits)
+        return seg_prob
+
+
+# ---- End: Multitask/SegGate wrappers and helpers ----
 
 
 
@@ -316,8 +490,60 @@ def remap_official_finetune_checkpoint_keys(state_dict: dict[str, torch.Tensor])
             remapped[new_key] = remapped[key]
         for key in backbone_keys:
             remapped.pop(key, None)
-            
+
+    # Multitask segmentation checkpoints contain an extra segmentation head.
+    # The CAM script only needs the classification backbone/head, so remove it.
+    for key in list(remapped.keys()):
+        if key.startswith("seg_head."):
+            remapped.pop(key, None)
+
     return remapped
+
+
+# ---- Begin: multitask/seg_gate checkpoint helpers ----
+
+def extract_checkpoint_state_dict(ckpt: dict) -> tuple[dict[str, torch.Tensor], str]:
+    if "model_state_dict" in ckpt:
+        return ckpt["model_state_dict"], "custom_pt"
+    if "model" in ckpt:
+        return ckpt["model"], "official_pth"
+    raise KeyError("Checkpoint must contain either 'model_state_dict' or 'model'.")
+
+
+def has_multitask_seg_head(state_dict: dict[str, torch.Tensor]) -> bool:
+    for key in state_dict.keys():
+        clean_key = key[len("module."):] if key.startswith("module.") else key
+        if clean_key.startswith("seg_head.") or clean_key.startswith("multitask_model.seg_head."):
+            return True
+    return False
+
+
+def prepare_multitask_state_dict_for_cam(state_dict: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+    prepared = {}
+    for key, value in state_dict.items():
+        if key.startswith("module."):
+            key = key[len("module."):]
+        if key.startswith("multitask_model."):
+            key = key.replace("multitask_model.", "", 1)
+
+        # Already saved from PanDermMultitaskSegWrapper.
+        if key.startswith("backbone.") or key.startswith("seg_head."):
+            prepared[key] = value
+            continue
+
+        # Foundation / bare PanDerm style keys should belong to the backbone.
+        if key.startswith("encoder."):
+            key = key.replace("encoder.", "", 1)
+        if key.startswith("decoder.") or key.startswith("teacher."):
+            continue
+        if key.startswith("norm."):
+            key = key.replace("norm.", "fc_norm.", 1)
+
+        prepared[f"backbone.{key}"] = value
+
+    return prepared
+
+# ---- End: multitask/seg_gate checkpoint helpers ----
 
 
 # --- Begin: helper functions for variant inference ---
@@ -349,15 +575,8 @@ def infer_panderm_variant_from_state_dict(state_dict: dict[str, torch.Tensor]) -
 
 
 def infer_variant_from_checkpoint_dict(ckpt: dict) -> tuple[dict[str, torch.Tensor], str, str]:
-    if "model_state_dict" in ckpt:
-        state_dict = ckpt["model_state_dict"]
-        checkpoint_format = "custom_pt"
-    elif "model" in ckpt:
-        state_dict = remap_official_finetune_checkpoint_keys(ckpt["model"])
-        checkpoint_format = "official_pth"
-    else:
-        raise KeyError("Checkpoint must contain either 'model_state_dict' or 'model'.")
-
+    raw_state_dict, checkpoint_format = extract_checkpoint_state_dict(ckpt)
+    state_dict = remap_official_finetune_checkpoint_keys(raw_state_dict)
     variant = infer_panderm_variant_from_state_dict(state_dict)
     return state_dict, checkpoint_format, variant
 
@@ -369,6 +588,10 @@ def load_panderm_finetuned_model(
     class_to_idx: dict[str, int],
     idx_to_class: dict[int, str],
     device: str | torch.device | None = None,
+    checkpoint_model_type: str = "auto",
+    use_seg_gate: bool = False,
+    seg_gate_bg_keep: float = 0.15,
+    seg_gate_detach: bool = True,
 ) -> tuple[torch.nn.Module, dict]:
     checkpoint_path = Path(checkpoint_path)
     if not checkpoint_path.exists():
@@ -377,22 +600,58 @@ def load_panderm_finetuned_model(
     if device is None:
         device = get_device(None)
 
-    model = None
-
     ckpt = torch.load(checkpoint_path, map_location="cpu")
+    raw_state_dict, checkpoint_format = extract_checkpoint_state_dict(ckpt)
+    raw_has_seg_head = has_multitask_seg_head(raw_state_dict)
 
-    state_dict, checkpoint_format, variant = infer_variant_from_checkpoint_dict(ckpt)
-    model = build_panderm_model(num_classes=num_classes, variant=variant)
+    if checkpoint_model_type == "auto":
+        if use_seg_gate:
+            checkpoint_model_type = "seggate"
+        elif raw_has_seg_head:
+            checkpoint_model_type = "multitask"
+        else:
+            checkpoint_model_type = "panderm"
 
-    state_dict_model = model.state_dict()
-    for k in ["head.weight", "head.bias"]:
-        if k in state_dict and k in state_dict_model and state_dict[k].shape != state_dict_model[k].shape:
-            raise ValueError(
-                f"Checkpoint head shape mismatch for {k}: checkpoint={tuple(state_dict[k].shape)} vs model={tuple(state_dict_model[k].shape)}. "
-                f"Check that --class_preset / --class_names matches the trained checkpoint."
-            )
+    if checkpoint_model_type == "panderm":
+        state_dict = remap_official_finetune_checkpoint_keys(raw_state_dict)
+        variant = infer_panderm_variant_from_state_dict(state_dict)
+        model = build_panderm_model(num_classes=num_classes, variant=variant)
 
-    missing, unexpected = model.load_state_dict(state_dict, strict=False)
+        state_dict_model = model.state_dict()
+        for k in ["head.weight", "head.bias"]:
+            if k in state_dict and k in state_dict_model and state_dict[k].shape != state_dict_model[k].shape:
+                raise ValueError(
+                    f"Checkpoint head shape mismatch for {k}: checkpoint={tuple(state_dict[k].shape)} vs model={tuple(state_dict_model[k].shape)}. "
+                    f"Check that --class_preset / --class_names matches the trained checkpoint."
+                )
+
+        missing, unexpected = model.load_state_dict(state_dict, strict=False)
+
+    elif checkpoint_model_type in ["multitask", "seggate"]:
+        prepared_state_dict = prepare_multitask_state_dict_for_cam(raw_state_dict)
+        variant_probe_state_dict = remap_official_finetune_checkpoint_keys(raw_state_dict)
+        variant = infer_panderm_variant_from_state_dict(variant_probe_state_dict)
+        backbone = build_panderm_model(num_classes=num_classes, variant=variant)
+        model = PanDermMultitaskSegCAMWrapper(
+            backbone=backbone,
+            use_seg_gate=(checkpoint_model_type == "seggate" or use_seg_gate),
+            seg_gate_bg_keep=seg_gate_bg_keep,
+            seg_gate_detach=seg_gate_detach,
+        )
+
+        state_dict_model = model.state_dict()
+        for k in ["backbone.head.weight", "backbone.head.bias"]:
+            if k in prepared_state_dict and k in state_dict_model and prepared_state_dict[k].shape != state_dict_model[k].shape:
+                raise ValueError(
+                    f"Checkpoint head shape mismatch for {k}: checkpoint={tuple(prepared_state_dict[k].shape)} vs model={tuple(state_dict_model[k].shape)}. "
+                    f"Check that --class_preset / --class_names matches the trained checkpoint."
+                )
+
+        missing, unexpected = model.load_state_dict(prepared_state_dict, strict=False)
+
+    else:
+        raise ValueError(f"Unsupported checkpoint_model_type: {checkpoint_model_type}")
+
     if len(missing) or len(unexpected):
         print(f"[warn] load_state_dict mismatch: missing={len(missing)}, unexpected={len(unexpected)}")
         if missing:
@@ -409,6 +668,10 @@ def load_panderm_finetuned_model(
         "num_classes": num_classes,
         "checkpoint_name": checkpoint_path.name,
         "checkpoint_format": checkpoint_format,
+        "checkpoint_model_type": checkpoint_model_type,
+        "use_seg_gate": bool(checkpoint_model_type == "seggate" or use_seg_gate),
+        "seg_gate_bg_keep": float(seg_gate_bg_keep),
+        "seg_gate_detach": bool(seg_gate_detach),
         "class_to_idx": class_to_idx,
         "idx_to_class": idx_to_class,
         "image_size": ckpt.get("image_size", 224),
@@ -451,12 +714,26 @@ def vit_reshape_transform(tensor: torch.Tensor) -> torch.Tensor:
     return tensor
 
 
-def get_image_id(row: pd.Series) -> str:
-    if "image" in row:
-        return str(row["image"])
-    if "isic_id" in row:
-        return str(row["isic_id"])
-    raise ValueError("CSV must contain column 'image' or 'isic_id'.")
+def get_image_id(row: pd.Series, image_col: str | None = None) -> str:
+    if image_col is not None:
+        if image_col not in row:
+            raise ValueError(f"Requested --image_col '{image_col}' not found in CSV row.")
+        return str(row[image_col])
+
+    for col in ["image", "isic_id", "image_rel_path"]:
+        if col in row:
+            return str(row[col])
+
+    raise ValueError("CSV must contain column 'image', 'isic_id', or 'image_rel_path'. Or pass --image_col.")
+
+
+# --- Begin: helper for safe output stem ---
+def make_safe_output_stem(image_id: str) -> str:
+    image_path = Path(str(image_id))
+    stem = image_path.stem if image_path.suffix else image_path.name
+    stem = stem.replace("/", "_").replace("\\", "_").replace(" ", "_")
+    return stem
+# --- End: helper for safe output stem ---
 
 
 # --- Begin: mask cropping helpers ---
@@ -528,6 +805,9 @@ def _expand_and_square_bbox(
     return new_x0, new_y0, new_x1, new_y1
 
 
+# --- End: mask cropping helpers ---
+
+
 def crop_image_with_mask(
     img: Image.Image,
     mask_path: Path,
@@ -543,7 +823,81 @@ def crop_image_with_mask(
         min_crop_frac=min_crop_frac,
     )
     return img.crop(crop_box)
-# --- End: mask cropping helpers ---
+
+
+# ---- Predicted segmentation gate visualization helper ----
+def predict_seg_gate_overlay(
+    model_raw: torch.nn.Module,
+    input_tensor: torch.Tensor,
+    rgb_float: np.ndarray,
+) -> tuple[np.ndarray | None, np.ndarray | None]:
+    if not hasattr(model_raw, "predict_seg_gate_map"):
+        return None, None
+
+    seg_prob = model_raw.predict_seg_gate_map(input_tensor)
+    seg_map_small = seg_prob[0, 0].detach().cpu().numpy()
+    rgb_h, rgb_w = rgb_float.shape[:2]
+    seg_map = cv2.resize(seg_map_small, (rgb_w, rgb_h), interpolation=cv2.INTER_CUBIC)
+    seg_map = np.clip(seg_map, 0.0, 1.0)
+
+    heat = cv2.applyColorMap((seg_map * 255.0).astype(np.uint8), cv2.COLORMAP_JET)
+    heat = cv2.cvtColor(heat, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+    overlay = np.clip(0.55 * rgb_float + 0.45 * heat, 0.0, 1.0)
+    return seg_map, overlay
+
+def make_gate_weighted_cam_overlay(
+    cam_map: np.ndarray,
+    gate_map: np.ndarray | None,
+    rgb_float: np.ndarray,
+) -> tuple[np.ndarray | None, np.ndarray | None]:
+    if gate_map is None:
+        return None, None
+
+    cam = np.asarray(cam_map, dtype=np.float32)
+    gate = np.asarray(gate_map, dtype=np.float32)
+
+    rgb_h, rgb_w = rgb_float.shape[:2]
+
+    if cam.shape != (rgb_h, rgb_w):
+        cam = cv2.resize(cam, (rgb_w, rgb_h), interpolation=cv2.INTER_CUBIC)
+
+    if gate.shape != (rgb_h, rgb_w):
+        gate = cv2.resize(gate, (rgb_w, rgb_h), interpolation=cv2.INTER_CUBIC)
+
+    cam = np.clip(cam, 0.0, 1.0)
+    gate = np.clip(gate, 0.0, 1.0)
+
+    weighted = cam * gate
+    weighted = weighted - weighted.min()
+    weighted = weighted / (weighted.max() + 1e-8)
+
+    heat = cv2.applyColorMap((weighted * 255.0).astype(np.uint8), cv2.COLORMAP_JET)
+    heat = cv2.cvtColor(heat, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+    overlay = np.clip(0.55 * rgb_float + 0.45 * heat, 0.0, 1.0)
+
+    return weighted, overlay
+
+def parse_panel_items(panel_items_arg: str) -> list[str]:
+    allowed = {
+        "rgb",
+        "seg_gate",
+        "gradcam_a",
+        "gradcam_b",
+        "map_diff",
+        "finercam",
+        "gate_weighted_finercam",
+    }
+
+    items = [item.strip() for item in str(panel_items_arg).split(",") if item.strip()]
+    if not items:
+        raise ValueError("--panel_items produced an empty panel item list.")
+
+    unknown = [item for item in items if item not in allowed]
+    if unknown:
+        raise ValueError(f"Unknown panel items: {unknown}. Allowed: {sorted(allowed)}")
+
+    return items
+# ---- End: predicted segmentation gate visualization helpers ----
 
 
 def main() -> None:
@@ -555,6 +909,7 @@ def main() -> None:
     ckpt_path = Path(args.checkpoint)
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    panel_items = parse_panel_items(args.panel_items)
 
     device = get_device(args.device)
 
@@ -567,9 +922,27 @@ def main() -> None:
         class_to_idx=class_to_idx,
         idx_to_class=idx_to_class,
         device=device,
+        checkpoint_model_type=args.checkpoint_model_type,
+        use_seg_gate=args.use_seg_gate,
+        seg_gate_bg_keep=args.seg_gate_bg_keep,
+        seg_gate_detach=args.seg_gate_detach,
     )
     print(f"[info] Loaded {info['arch']} from {ckpt_path.name}")
-    relprop_model = build_panderm_relprop_from_model(model_raw).to(device)
+    print(
+        "[info] checkpoint_model_type=",
+        info.get("checkpoint_model_type"),
+        "use_seg_gate=",
+        info.get("use_seg_gate"),
+        "seg_gate_bg_keep=",
+        info.get("seg_gate_bg_keep"),
+        "seg_gate_detach=",
+        info.get("seg_gate_detach"),
+    )
+    if hasattr(model_raw, "backbone"):
+        relprop_source_model = model_raw.backbone
+    else:
+        relprop_source_model = model_raw
+    relprop_model = build_panderm_relprop_from_model(relprop_source_model).to(device)
     relprop_model.eval()
     model = PanDermCAMWrapper(model_raw)
 
@@ -585,7 +958,10 @@ def main() -> None:
             T.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
         ])
 
-    target_layer = model_raw.blocks[-1].norm1
+    if hasattr(model_raw, "backbone"):
+        target_layer = model_raw.backbone.blocks[-1].norm1
+    else:
+        target_layer = model_raw.blocks[-1].norm1
 
     df = pd.read_csv(csv_path)
     if args.crop_with_mask:
@@ -596,15 +972,23 @@ def main() -> None:
                 f"--crop_with_mask requires mask column '{args.mask_col}' in the CSV. "
                 f"Found columns: {df.columns.tolist()}"
             )
-    if "image" not in df.columns and "isic_id" not in df.columns:
-        raise ValueError(f"CSV must contain column 'image' or 'isic_id'. Found: {df.columns.tolist()}")
+    if args.image_col is not None:
+        if args.image_col not in df.columns:
+            raise ValueError(f"Requested --image_col '{args.image_col}' not found. Found: {df.columns.tolist()}")
+    elif "image" not in df.columns and "isic_id" not in df.columns and "image_rel_path" not in df.columns:
+        raise ValueError(
+            f"CSV must contain column 'image', 'isic_id', or 'image_rel_path'. "
+            f"Found: {df.columns.tolist()}"
+        )
 
     df = df.head(args.num_samples)
 
     for _, row in df.iterrows():
-        image_id = get_image_id(row)
-        if image_id.lower().endswith(".jpg") or image_id.lower().endswith(".jpeg") or image_id.lower().endswith(".png"):
-            img_path = img_dir / image_id
+        image_id = get_image_id(row, image_col=args.image_col)
+        image_id_path = Path(image_id)
+        output_stem = make_safe_output_stem(image_id)
+        if image_id_path.suffix.lower() in [".jpg", ".jpeg", ".png"]:
+            img_path = img_dir / image_id_path
         else:
             img_path = img_dir / f"{image_id}.jpg"
         if not img_path.exists():
@@ -639,6 +1023,23 @@ def main() -> None:
         rgb = np.array(img).astype(np.float32) / 255.0
         rgb_resized = cv2.resize(rgb, (image_size, image_size), interpolation=cv2.INTER_LINEAR)
 
+        seg_gate_map = None
+        seg_gate_overlay = None
+
+        if "seg_gate" in panel_items or "gate_weighted_finercam" in panel_items:
+            seg_gate_map, seg_gate_overlay = predict_seg_gate_overlay(
+                model_raw=model_raw,
+                input_tensor=x,
+                rgb_float=rgb_resized,
+            )
+
+            if seg_gate_map is None:
+                raise ValueError(
+                    "Requested seg_gate or gate_weighted_finercam in --panel_items, "
+                    "but the loaded model does not expose predict_seg_gate_map(). "
+                    "Use these panel items only with multitask/seggate checkpoints."
+                )
+
         A_idx, B_idx = None, None
         comparison_categories = None
 
@@ -656,9 +1057,12 @@ def main() -> None:
                 raise ValueError("compare_mode=gt_pair requires --A and --B")
             if args.A not in class_to_idx or args.B not in class_to_idx:
                 raise ValueError(f"Unknown class name. Allowed: {class_names}")
-            if "gt_label" not in df.columns:
-                raise ValueError("compare_mode=gt_pair requires the CSV to contain a 'gt_label' column.")
-            gt = str(row["gt_label"])
+            gt = resolve_gt_label_from_row(
+                row=row,
+                class_names=class_names,
+                class_to_idx=class_to_idx,
+                gt_col=args.gt_col,
+            )
             if gt not in [args.A, args.B]:
                 print(f"[skip] {image_id}: gt_label={gt} not in pair ({args.A},{args.B})")
                 continue
@@ -676,9 +1080,12 @@ def main() -> None:
             B_idx = comparison_categories[0]
 
         elif args.compare_mode == "gt_topk_non_target":
-            if "gt_label" not in df.columns:
-                raise ValueError("compare_mode=gt_topk_non_target requires the CSV to contain a 'gt_label' column.")
-            gt = str(row["gt_label"])
+            gt = resolve_gt_label_from_row(
+                row=row,
+                class_names=class_names,
+                class_to_idx=class_to_idx,
+                gt_col=args.gt_col,
+            )
             if gt not in class_to_idx:
                 print(f"[skip] {image_id}: gt_label={gt} not in class list")
                 continue
@@ -700,7 +1107,14 @@ def main() -> None:
             comparison_categories=comparison_categories,
             reshape_transform=vit_reshape_transform,
             alpha=args.alpha,
-            relprop_model=relprop_model,
+            relprop_model=relprop_model if args.show_extra_rows else None,
+            include_extra_maps=args.show_extra_rows,
+        )
+
+        gate_weighted_finercam, gate_weighted_finercam_overlay = make_gate_weighted_cam_overlay(
+            cam_map=res["cam_finercam"],
+            gate_map=seg_gate_map,
+            rgb_float=rgb_resized,
         )
 
         top3_idx = np.argsort(res["probs"])[-3:][::-1]
@@ -711,7 +1125,22 @@ def main() -> None:
         comp_named = ", ".join([idx_to_class[int(i)] for i in res.get("comparison_categories", [res["B"]])])
         print(f"[info] {image_id}: A={res['A']}({A_name})  B={res['B']}({B_name})  comparison=[{comp_named}]  top3=[{top3_named}]")
 
-        gt_label = row["gt_label"] if "gt_label" in df.columns else None
+        if args.gt_col is not None and args.gt_col in df.columns:
+            gt_label = resolve_gt_label_from_row(
+                row=row,
+                class_names=class_names,
+                class_to_idx=class_to_idx,
+                gt_col=args.gt_col,
+            )
+        elif "gt_label" in df.columns:
+            gt_label = resolve_gt_label_from_row(
+                row=row,
+                class_names=class_names,
+                class_to_idx=class_to_idx,
+                gt_col="gt_label",
+            )
+        else:
+            gt_label = None
         gradcam_a_prob = float(res["probs"][int(res["A"])])
         gradcam_b_prob = float(res["probs"][int(res["B"])])
         finercam_prob = float(res["probs"][int(res["A"])])
@@ -724,10 +1153,12 @@ def main() -> None:
             first_tile_line1=first_tile_line1,
             first_tile_line2=first_tile_line2,
             rgb_float=rgb_resized,
+            seg_gate_overlay=seg_gate_overlay,
             gradcam_overlay_a=res["overlay_gradcam"],
             gradcam_overlay_b=res["overlay_gradcam_B"],
             gradcam_diff_overlay=res["overlay_gradcam_diff"],
             finercam_overlay=res["overlay_finercam"],
+            gate_weighted_finercam_overlay=gate_weighted_finercam_overlay,
             rollout_overlay=res["overlay_rollout"],
             chefer_overlay_a=res["overlay_chefer"],
             chefer_overlay_b=res["overlay_chefer_B"],
@@ -743,6 +1174,8 @@ def main() -> None:
             gradcam_diff_line2=f"max(0, {A_name} - {B_name})",
             finercam_line1="FinerCAM",
             finercam_line2=f"{A_name} vs {B_name} ({finercam_prob:.2f})",
+            gate_weighted_finercam_line1="Gate weighted FinerCAM",
+            gate_weighted_finercam_line2=f"{A_name} FinerCAM × gate",
             rollout_line1="Rollout",
             rollout_line2=f"{A_name} ({rollout_prob:.2f})",
             chefer_a_line1="Chefer-style",
@@ -757,11 +1190,15 @@ def main() -> None:
             relprop_chefer_b_line2=f"{B_name}",
             relprop_chefer_diff_line1="Relprop Map Diff",
             relprop_chefer_diff_line2=f"max(0, {A_name} - {B_name})",
+            seg_gate_line1="Predicted Seg Gate",
+            seg_gate_line2="auxiliary head",
             scale=args.panel_scale,
+            show_extra_row=args.show_extra_rows,
             show_relprop_row=args.show_relprop_row,
+            panel_items=panel_items,
         )
 
-        panel_path = out_dir / f"{image_id}_RGB_GradCAMA_GradCAMB_GradCAMDiff_FinerCAM_Rollout_CheferStyle.png"
+        panel_path = out_dir / f"{output_stem}_RGB_SegGate_GradCAMA_GradCAMB_GradCAMDiff_FinerCAM_GateWeightedFinerCAM.png"
         Image.fromarray(panel_img_uint8).save(panel_path)
 
         if args.save_json:
@@ -784,10 +1221,18 @@ def main() -> None:
                 "compare_mode": args.compare_mode,
                 "A_name": A_name,
                 "B_name": B_name,
-                "target_layer": "model_raw.blocks[-1].norm1",
+                "target_layer": (
+                    "model_raw.backbone.blocks[-1].norm1"
+                    if hasattr(model_raw, "backbone")
+                    else "model_raw.blocks[-1].norm1"
+                ),
                 "class_names": class_names,
                 "class_preset": args.class_preset,
                 "checkpoint_format": info.get("checkpoint_format"),
+                "checkpoint_model_type": info.get("checkpoint_model_type"),
+                "use_seg_gate": info.get("use_seg_gate"),
+                "seg_gate_bg_keep": info.get("seg_gate_bg_keep"),
+                "seg_gate_detach": info.get("seg_gate_detach"),
                 "gradcam_a_prob": gradcam_a_prob,
                 "gradcam_b_prob": gradcam_b_prob,
                 "gradcam_diff_desc": f"max(0, {A_name} - {B_name})",
@@ -805,8 +1250,10 @@ def main() -> None:
                 "mask_col": args.mask_col,
                 "crop_margin": float(args.crop_margin),
                 "min_crop_frac": float(args.min_crop_frac),
+                "seg_gate_visualized": seg_gate_overlay is not None,
+                "gate_weighted_finercam_visualized": gate_weighted_finercam_overlay is not None,
             }
-            (out_dir / f"{image_id}_meta.json").write_text(json.dumps(meta, indent=2))
+            (out_dir / f"{output_stem}_meta.json").write_text(json.dumps(meta, indent=2))
 
     print(f"Done. Outputs in: {out_dir}")
 
