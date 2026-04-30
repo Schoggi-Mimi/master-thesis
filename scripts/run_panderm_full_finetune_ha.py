@@ -43,6 +43,7 @@ def parse_args():
     parser.add_argument("--eval-only", action="store_true")
     parser.add_argument("--debug-batches", type=int, default=2)
     parser.add_argument("--ha-loss-type", type=str, default="paper_dice", choices=["paper_dice", "alignment"])
+    parser.add_argument("--disable-amp", action="store_true")
 
     return parser.parse_args()
 
@@ -92,7 +93,10 @@ def main():
         "--ha_lambda", str(args.ha_lambda),
         "--ha_fp_weight", str(args.ha_fp_weight),
         "--ha_loss_type", str(args.ha_loss_type),
+        "--disable_amp" if args.disable_amp else None,
     ]
+
+    cmd = [x for x in cmd if x is not None]
 
     if args.init_checkpoint:
         cmd.extend(["--init_checkpoint", str(Path(args.init_checkpoint).resolve())])

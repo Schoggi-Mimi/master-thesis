@@ -1,7 +1,7 @@
 #!/bin/bash
-#SBATCH --job-name=panderm_ft_cropmask
-#SBATCH --output=logs/panderm_ft_cropmask_%j.out
-#SBATCH --error=logs/panderm_ft_cropmask_%j.err
+#SBATCH --job-name=panderm_ft_cropmask_base_nomix
+#SBATCH --output=logs/panderm_ft_cropmask_base_nomix_%j.out
+#SBATCH --error=logs/panderm_ft_cropmask_base_nomix_%j.err
 #SBATCH --time=12:00:00
 #SBATCH --mail-user=choekyel.nyungmartsang@students.unibe.ch
 #SBATCH --mail-type=END,FAIL
@@ -21,15 +21,15 @@ eval "$(conda shell.bash hook)"
 conda activate thesis
 
 python run_class_finetuning_cropmask.py \
-  --model PanDerm_Large_FT \
-  --batch_size 8 \
-  --epochs 10 \
+  --model PanDerm_Base_FT \
+  --batch_size 16 \
+  --epochs 20 \
   --update_freq 1 \
   --input_size 224 \
   --drop_path 0.2 \
   --lr 1e-4 \
   --layer_decay 0.65 \
-  --warmup_epochs 0 \
+  --warmup_epochs 2 \
   --smoothing 0.0 \
   --mixup 0.0 \
   --cutmix 0.0 \
@@ -38,8 +38,9 @@ python run_class_finetuning_cropmask.py \
   --image_key image_rel_path \
   --mask_key mask_rel_path \
   --nb_classes 7 \
-  --pretrained_checkpoint "$HOME/projects/master-thesis/external/weights/panderm_ll_data6_checkpoint-499.pth" \
-  --output_dir "$HOME/projects/master-thesis/outputs/panderm_cropmask_margin025" \
+  --pretrained_checkpoint "$HOME/projects/master-thesis/external/weights/panderm_bb_data6_checkpoint-499.pth" \
+  --output_dir "$HOME/projects/master-thesis/outputs/panderm_cropmask_base_margin025_weighted_nomix" \
   --crop_margin 0.25 \
   --min_crop_frac 0.30 \
+  --weights \
   --disable_amp

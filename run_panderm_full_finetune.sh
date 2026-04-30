@@ -1,7 +1,7 @@
 #!/bin/bash
-#SBATCH --job-name=panderm_ft_official_ham
-#SBATCH --output=logs/panderm_ft_official_ham_%j.out
-#SBATCH --error=logs/panderm_ft_official_ham_%j.err
+#SBATCH --job-name=panderm_base_ham_nomix_weighted
+#SBATCH --output=logs/panderm_base_ham_nomix_weighted_%j.out
+#SBATCH --error=logs/panderm_base_ham_nomix_weighted_%j.err
 #SBATCH --time=12:00:00
 #SBATCH --mail-user=choekyel.nyungmartsang@students.unibe.ch
 #SBATCH --mail-type=END,FAIL
@@ -16,15 +16,9 @@
 REPO_DIR="$HOME/projects/master-thesis/scripts"
 cd "$REPO_DIR"
 
-mkdir -p ../logs
-mkdir -p ../outputs/panderm_full_finetune/ham_overlap_control
-
 module load Anaconda3
 eval "$(conda shell.bash hook)"
 conda activate thesis
-
-nvidia-smi || true
-python -c "import torch; print('cuda available:', torch.cuda.is_available()); print('device count:', torch.cuda.device_count())"
 
 python run_panderm_full_finetune_official.py \
   --panderm-classification-dir ../external/PanDerm/classification \
@@ -32,19 +26,21 @@ python run_panderm_full_finetune_official.py \
   --root-path ../data/HAM10000 \
   --image-key image_rel_path \
   --pretrained-checkpoint ../external/weights/panderm_bb_data6_checkpoint-499.pth \
-  --output-dir ../outputs/panderm_full_finetune/ham_overlap_control \
+  --output-dir ../outputs/panderm_full_finetune/ham_base_nomix_weighted \
   --model PanDerm_Base_FT \
   --nb-classes 7 \
   --batch-size 64 \
-  --epochs 5 \
+  --epochs 20 \
   --lr 5e-4 \
   --weight-decay 0.05 \
   --warmup-epochs 1 \
+  --mixup 0.0 \
+  --cutmix 0.0 \
   --layer-decay 0.65 \
   --drop-path 0.2 \
   --update-freq 1 \
   --weights \
   --monitor recall \
-  --wandb-name panderm_full_finetune_ham_overlap_control \
+  --wandb-name panderm_base_ham_nomix_weighted \
   --wandb-mode disabled \
   --device cuda

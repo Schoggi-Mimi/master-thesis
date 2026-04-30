@@ -102,6 +102,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--update-freq", type=int, default=1)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--num-workers", type=int, default=4)
+    parser.add_argument("--mixup", type=float, default=0.0)
+    parser.add_argument("--cutmix", type=float, default=0.0)
 
     parser.add_argument(
         "--monitor",
@@ -204,9 +206,9 @@ def build_train_cmd(
         "--weight_decay",
         str(args.weight_decay),
         "--mixup",
-        "0.8",
+        str(args.mixup),
         "--cutmix",
-        "1.0",
+        str(args.cutmix),
         "--sin_pos_emb",
         "--no_auto_resume",
         "--monitor",
@@ -339,6 +341,8 @@ def main() -> None:
     print(f"warmup_epochs={args.warmup_epochs}")
     print(f"layer_decay={args.layer_decay}")
     print(f"drop_path={args.drop_path}")
+    print(f"mixup={args.mixup}")
+    print(f"cutmix={args.cutmix}")
     print(f"monitor={args.monitor}")
     print(f"weights={args.weights}")
     print(f"tta={args.tta}")

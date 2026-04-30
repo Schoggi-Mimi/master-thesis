@@ -1,36 +1,97 @@
 """
 python -m scripts.generate_finer_cam_panderm \
-  --csv data/HAM10000/ham_test_mel_only.csv \
+  --csv data/HAM10000/ham_test_cam_qualitative_stratified_10.csv \
   --image_col image_rel_path \
   --img_dir data/HAM10000 \
-  --checkpoint external/weights/checkpoint-best-ham.pth \
+  --gt_col gt_label \
+  --checkpoint external/checkpoints/checkpoint-best-ham.pth \
   --checkpoint_model_type panderm \
   --class_preset ham \
-  --out_dir outputs/ham_baseline_cam_mel_vs_nv \
-  --num_samples 20 \
+  --out_dir outputs/qual/cam_baseline_gt_topk3 \
+  --num_samples 10 \
   --method finercam \
-  --compare_mode fixed \
-  --A MEL \
-  --B NV \
-  --alpha 0.8
+  --compare_mode gt_topk_non_target \
+  --topk_compare 3 \
+  --alpha 0.8 \
+  --panel_items rgb_gt_mask,gradcam_a,gradcam_b,map_diff,finercam \
+  --mask_root data/HAM10000 \
+  --mask_col mask_rel_path
 
 python -m scripts.generate_finer_cam_panderm \
-  --csv data/HAM10000/ham_test_mel_only.csv \
+  --csv data/HAM10000/ham_test_cam_qualitative_stratified_10.csv \
   --image_col image_rel_path \
   --img_dir data/HAM10000 \
+  --gt_col gt_label \
+  --checkpoint external/checkpoints/checkpoint-best-cropmask-base-weighted-nomix.pth \
+  --checkpoint_model_type panderm \
+  --class_preset ham \
+  --out_dir outputs/qual/cam_cropmask_gt_topk3 \
+  --num_samples 10 \
+  --method finercam \
+  --compare_mode gt_topk_non_target \
+  --topk_compare 3 \
+  --alpha 0.8 \
+  --panel_items rgb_gt_mask,gradcam_a,gradcam_b,map_diff,finercam \
+  --crop_with_mask \
+  --mask_root data/HAM10000 \
+  --mask_col mask_rel_path \
+  --crop_margin 0.25 \
+  --min_crop_frac 0.30
+
+python -m scripts.generate_finer_cam_panderm \
+  --csv data/HAM10000/ham_test_cam_qualitative_stratified_10.csv \
+  --image_col image_rel_path \
+  --img_dir data/HAM10000 \
+  --gt_col gt_label \
+  --checkpoint external/checkpoints/checkpoint-best-softmask-base-weighted-nomix.pth \
+  --checkpoint_model_type panderm \
+  --class_preset ham \
+  --out_dir outputs/qual/cam_softmask_gt_topk3 \
+  --num_samples 10 \
+  --method finercam \
+  --compare_mode gt_topk_non_target \
+  --topk_compare 3 \
+  --alpha 0.8 \
+  --panel_items rgb_gt_mask,gradcam_a,gradcam_b,map_diff,finercam \
+  --mask_root data/HAM10000 \
+  --mask_col mask_rel_path
+
+python -m scripts.generate_finer_cam_panderm \
+  --csv data/HAM10000/ham_test_cam_qualitative_stratified_10.csv \
+  --image_col image_rel_path \
+  --img_dir data/HAM10000 \
+  --gt_col gt_label \
+  --checkpoint external/checkpoints/checkpoint-best-HA_lam1.pth \
+  --checkpoint_model_type panderm \
+  --class_preset ham \
+  --out_dir outputs/qual/cam_ha_gt_topk3 \
+  --num_samples 10 \
+  --method finercam \
+  --compare_mode gt_topk_non_target \
+  --topk_compare 3 \
+  --alpha 0.8 \
+  --panel_items rgb_gt_mask,gradcam_a,gradcam_b,map_diff,finercam \
+  --mask_root data/HAM10000 \
+  --mask_col mask_rel_path
+
+python -m scripts.generate_finer_cam_panderm \
+  --csv data/HAM10000/ham_test_cam_qualitative_stratified_10.csv \
+  --image_col image_rel_path \
+  --img_dir data/HAM10000 \
+  --gt_col gt_label \
   --checkpoint external/weights/checkpoint-best-seggate.pth \
   --checkpoint_model_type seggate \
   --use_seg_gate \
-  --seg_gate_bg_keep 0.15 \
   --class_preset ham \
-  --out_dir outputs/ham_seggate_cam_mel_vs_nv \
-  --num_samples 20 \
+  --out_dir outputs/qual/cam_seggate_gt_topk3 \
+  --num_samples 10 \
   --method finercam \
-  --compare_mode fixed \
-  --A MEL \
-  --B NV \
+  --compare_mode gt_topk_non_target \
+  --topk_compare 3 \
   --alpha 0.8 \
-  --panel_items rgb,seg_gate,gradcam_a,gradcam_b,map_diff,finercam,gate_weighted_finercam
+  --panel_items rgb_gt_mask,gate_weighted_gradcam_a,gate_weighted_gradcam_b,gate_weighted_map_diff,gate_weighted_finercam \
+  --mask_root data/HAM10000 \
+  --mask_col mask_rel_path
 """
 
 from __future__ import annotations
@@ -225,13 +286,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--panel_items",
         type=str,
-        default="rgb,gradcam_a,gradcam_b,map_diff,finercam",
+        default="rgb_gt_mask,gradcam_a,gradcam_b,map_diff,finercam",
         help=(
             "Comma-separated first-row panel items. "
-            "Default: rgb,gradcam_a,gradcam_b,map_diff,finercam. "
-            "Options: rgb,seg_gate,gradcam_a,gradcam_b,map_diff,finercam,gate_weighted_finercam. "
+            "Default: rgb_gt_mask,gradcam_a,gradcam_b,map_diff,finercam. "
+            "Options: rgb,rgb_gt_mask,gt_mask,seg_gate,gradcam_a,gradcam_b,map_diff,finercam,"
+            "gate_weighted_gradcam_a,gate_weighted_gradcam_b,gate_weighted_map_diff,gate_weighted_finercam. "
             "For SegGate visualizations, use: "
-            "rgb,seg_gate,gradcam_a,gradcam_b,map_diff,finercam,gate_weighted_finercam."
+            "rgb_gt_mask,gate_weighted_gradcam_a,gate_weighted_gradcam_b,gate_weighted_map_diff,gate_weighted_finercam."
         ),
     )
     parser.add_argument(
@@ -824,6 +886,75 @@ def crop_image_with_mask(
     )
     return img.crop(crop_box)
 
+def load_mask_for_row(
+    row: pd.Series,
+    mask_root: Path | None,
+    mask_col: str,
+) -> Image.Image | None:
+    if mask_col not in row:
+        return None
+
+    mask_value = row[mask_col]
+    if pd.isna(mask_value):
+        return None
+
+    mask_path = Path(str(mask_value))
+
+    if not mask_path.is_absolute():
+        if mask_root is not None:
+            mask_path = mask_root / mask_path
+        else:
+            mask_path = REPO_ROOT / mask_path
+
+    if not mask_path.exists():
+        return None
+
+    return Image.open(mask_path).convert("L")
+
+
+def make_gt_mask_overlay(
+    mask: Image.Image,
+    rgb_float: np.ndarray,
+) -> np.ndarray:
+    rgb_h, rgb_w = rgb_float.shape[:2]
+
+    mask_resized = mask.resize((rgb_w, rgb_h), resample=Image.Resampling.NEAREST)
+    mask_np = np.array(mask_resized).astype(np.float32)
+
+    if mask_np.max() > 0:
+        mask_np = mask_np / mask_np.max()
+
+    mask_bin = (mask_np > 0.5).astype(np.uint8)
+
+    overlay_uint8 = (np.clip(rgb_float, 0.0, 1.0) * 255.0).astype(np.uint8)
+
+    contours, _ = cv2.findContours(
+        mask_bin,
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE,
+    )
+
+    cv2.drawContours(
+        overlay_uint8,
+        contours,
+        contourIdx=-1,
+        color=(255, 0, 0),
+        thickness=2,
+    )
+
+    return overlay_uint8.astype(np.float32) / 255.0
+
+def make_gt_mask_binary_rgb(
+    mask: Image.Image,
+    rgb_float: np.ndarray,
+) -> np.ndarray:
+    rgb_h, rgb_w = rgb_float.shape[:2]
+    mask_resized = mask.resize((rgb_w, rgb_h), resample=Image.Resampling.NEAREST)
+    mask_np = np.array(mask_resized).astype(np.float32)
+    if mask_np.max() > 0:
+        mask_np = mask_np / mask_np.max()
+    mask_np = np.clip(mask_np, 0.0, 1.0)
+    return np.stack([mask_np, mask_np, mask_np], axis=-1)
 
 # ---- Predicted segmentation gate visualization helper ----
 def predict_seg_gate_overlay(
@@ -880,11 +1011,16 @@ def make_gate_weighted_cam_overlay(
 def parse_panel_items(panel_items_arg: str) -> list[str]:
     allowed = {
         "rgb",
+        "rgb_gt_mask",
+        "gt_mask",
         "seg_gate",
         "gradcam_a",
         "gradcam_b",
         "map_diff",
         "finercam",
+        "gate_weighted_gradcam_a",
+        "gate_weighted_gradcam_b",
+        "gate_weighted_map_diff",
         "gate_weighted_finercam",
     }
 
@@ -972,6 +1108,18 @@ def main() -> None:
                 f"--crop_with_mask requires mask column '{args.mask_col}' in the CSV. "
                 f"Found columns: {df.columns.tolist()}"
             )
+
+    if any(item in panel_items for item in ["gt_mask", "rgb_gt_mask"]) and args.mask_col not in df.columns:
+        raise ValueError(
+            f"Panel item 'gt_mask' or 'rgb_gt_mask' requires mask column '{args.mask_col}' in the CSV. "
+            f"Found columns: {df.columns.tolist()}"
+        )
+
+    if any(item in panel_items for item in ["gt_mask", "rgb_gt_mask"]) and mask_root is None:
+        print(
+            "[warn] gt_mask/rgb_gt_mask requested but --mask_root was not provided. "
+            "Mask paths will be resolved relative to --img_dir."
+        )
     if args.image_col is not None:
         if args.image_col not in df.columns:
             raise ValueError(f"Requested --image_col '{args.image_col}' not found. Found: {df.columns.tolist()}")
@@ -997,6 +1145,19 @@ def main() -> None:
 
         img = Image.open(img_path).convert("RGB")
 
+        mask_img = None
+
+        if any(item in panel_items for item in ["gt_mask", "rgb_gt_mask"]):
+            mask_img = load_mask_for_row(
+                row=row,
+                mask_root=mask_root if mask_root is not None else img_dir,
+                mask_col=args.mask_col,
+            )
+
+            if mask_img is None:
+                print(f"[skip] missing ground-truth mask for image: {image_id}")
+                continue
+
         if args.crop_with_mask:
             mask_value = row[args.mask_col]
             if pd.isna(mask_value):
@@ -1012,6 +1173,14 @@ def main() -> None:
                 margin=args.crop_margin,
                 min_crop_frac=args.min_crop_frac,
             )
+            if mask_img is not None:
+                crop_box = _expand_and_square_bbox(
+                    bbox=_mask_bbox(mask_img),
+                    image_size=mask_img.size,
+                    margin=args.crop_margin,
+                    min_crop_frac=args.min_crop_frac,
+                )
+                mask_img = mask_img.crop(crop_box)
 
         x = preprocess(img).unsqueeze(0).to(device)
 
@@ -1023,10 +1192,28 @@ def main() -> None:
         rgb = np.array(img).astype(np.float32) / 255.0
         rgb_resized = cv2.resize(rgb, (image_size, image_size), interpolation=cv2.INTER_LINEAR)
 
+        gt_mask_overlay = None
+        gt_mask_binary = None
+
+        if any(item in panel_items for item in ["gt_mask", "rgb_gt_mask"]):
+            if mask_img is None:
+                raise ValueError("Internal error: gt_mask/rgb_gt_mask requested but mask_img is None.")
+            gt_mask_overlay = make_gt_mask_overlay(mask_img, rgb_resized)
+            gt_mask_binary = make_gt_mask_binary_rgb(mask_img, rgb_resized)
+
         seg_gate_map = None
         seg_gate_overlay = None
 
-        if "seg_gate" in panel_items or "gate_weighted_finercam" in panel_items:
+        if any(
+            item in panel_items
+            for item in [
+                "seg_gate",
+                "gate_weighted_gradcam_a",
+                "gate_weighted_gradcam_b",
+                "gate_weighted_map_diff",
+                "gate_weighted_finercam",
+            ]
+        ):
             seg_gate_map, seg_gate_overlay = predict_seg_gate_overlay(
                 model_raw=model_raw,
                 input_tensor=x,
@@ -1035,7 +1222,7 @@ def main() -> None:
 
             if seg_gate_map is None:
                 raise ValueError(
-                    "Requested seg_gate or gate_weighted_finercam in --panel_items, "
+                    "Requested seg_gate or gate_weighted_* in --panel_items, "
                     "but the loaded model does not expose predict_seg_gate_map(). "
                     "Use these panel items only with multitask/seggate checkpoints."
                 )
@@ -1111,6 +1298,21 @@ def main() -> None:
             include_extra_maps=args.show_extra_rows,
         )
 
+        gate_weighted_gradcam_a, gate_weighted_gradcam_a_overlay = make_gate_weighted_cam_overlay(
+            cam_map=res["cam_gradcam"],
+            gate_map=seg_gate_map,
+            rgb_float=rgb_resized,
+        )
+        gate_weighted_gradcam_b, gate_weighted_gradcam_b_overlay = make_gate_weighted_cam_overlay(
+            cam_map=res["cam_gradcam_B"],
+            gate_map=seg_gate_map,
+            rgb_float=rgb_resized,
+        )
+        gate_weighted_map_diff, gate_weighted_map_diff_overlay = make_gate_weighted_cam_overlay(
+            cam_map=res["cam_gradcam_diff"],
+            gate_map=seg_gate_map,
+            rgb_float=rgb_resized,
+        )
         gate_weighted_finercam, gate_weighted_finercam_overlay = make_gate_weighted_cam_overlay(
             cam_map=res["cam_finercam"],
             gate_map=seg_gate_map,
@@ -1153,12 +1355,17 @@ def main() -> None:
             first_tile_line1=first_tile_line1,
             first_tile_line2=first_tile_line2,
             rgb_float=rgb_resized,
+            gt_mask_overlay=gt_mask_overlay,
+            gt_mask_binary=gt_mask_binary,
             seg_gate_overlay=seg_gate_overlay,
             gradcam_overlay_a=res["overlay_gradcam"],
             gradcam_overlay_b=res["overlay_gradcam_B"],
             gradcam_diff_overlay=res["overlay_gradcam_diff"],
             finercam_overlay=res["overlay_finercam"],
             gate_weighted_finercam_overlay=gate_weighted_finercam_overlay,
+            gate_weighted_gradcam_a_overlay=gate_weighted_gradcam_a_overlay,
+            gate_weighted_gradcam_b_overlay=gate_weighted_gradcam_b_overlay,
+            gate_weighted_map_diff_overlay=gate_weighted_map_diff_overlay,
             rollout_overlay=res["overlay_rollout"],
             chefer_overlay_a=res["overlay_chefer"],
             chefer_overlay_b=res["overlay_chefer_B"],
@@ -1176,6 +1383,12 @@ def main() -> None:
             finercam_line2=f"{A_name} vs {B_name} ({finercam_prob:.2f})",
             gate_weighted_finercam_line1="Gate weighted FinerCAM",
             gate_weighted_finercam_line2=f"{A_name} FinerCAM × gate",
+            gate_weighted_gradcam_a_line1="GradCAM × gate",
+            gate_weighted_gradcam_a_line2=f"{A_name} ({gradcam_a_prob:.2f})",
+            gate_weighted_gradcam_b_line1="GradCAM × gate",
+            gate_weighted_gradcam_b_line2=f"{B_name} ({gradcam_b_prob:.2f})",
+            gate_weighted_map_diff_line1="Map Diff × gate",
+            gate_weighted_map_diff_line2=f"max(0, {A_name} - {B_name}) × gate",
             rollout_line1="Rollout",
             rollout_line2=f"{A_name} ({rollout_prob:.2f})",
             chefer_a_line1="Chefer-style",
@@ -1198,7 +1411,8 @@ def main() -> None:
             panel_items=panel_items,
         )
 
-        panel_path = out_dir / f"{output_stem}_RGB_SegGate_GradCAMA_GradCAMB_GradCAMDiff_FinerCAM_GateWeightedFinerCAM.png"
+        panel_suffix = "_".join(panel_items)
+        panel_path = out_dir / f"{output_stem}_{panel_suffix}.png"
         Image.fromarray(panel_img_uint8).save(panel_path)
 
         if args.save_json:

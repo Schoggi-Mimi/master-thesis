@@ -245,12 +245,17 @@ def make_panel_with_subtitles(
     first_tile_line1: str,
     first_tile_line2: str,
     rgb_float: np.ndarray,
+    gt_mask_overlay: Optional[np.ndarray] = None,
+    gt_mask_binary: Optional[np.ndarray] = None,
     seg_gate_overlay: Optional[np.ndarray] = None,
     gradcam_overlay_a: np.ndarray = None,
     gradcam_overlay_b: np.ndarray = None,
     gradcam_diff_overlay: np.ndarray = None,
     finercam_overlay: np.ndarray = None,
     gate_weighted_finercam_overlay: Optional[np.ndarray] = None,
+    gate_weighted_gradcam_a_overlay: Optional[np.ndarray] = None,
+    gate_weighted_gradcam_b_overlay: Optional[np.ndarray] = None,
+    gate_weighted_map_diff_overlay: Optional[np.ndarray] = None,
     rollout_overlay: np.ndarray = None,
     chefer_overlay_a: np.ndarray = None,
     chefer_overlay_b: np.ndarray = None,
@@ -268,6 +273,12 @@ def make_panel_with_subtitles(
     finercam_line2: str = "",
     gate_weighted_finercam_line1: str = "Gate weighted FinerCAM",
     gate_weighted_finercam_line2: str = "FinerCAM × gate",
+    gate_weighted_gradcam_a_line1: str = "GradCAM × gate",
+    gate_weighted_gradcam_a_line2: str = "",
+    gate_weighted_gradcam_b_line1: str = "GradCAM × gate",
+    gate_weighted_gradcam_b_line2: str = "",
+    gate_weighted_map_diff_line1: str = "Map Diff × gate",
+    gate_weighted_map_diff_line2: str = "",
     rollout_line1: str = "Rollout",
     rollout_line2: str = "",
     chefer_a_line1: str = "Chefer-style",
@@ -290,6 +301,15 @@ def make_panel_with_subtitles(
     panel_items: Optional[list[str]] = None,
 ) -> np.ndarray:
     rgb_uint8 = _to_uint8_rgb(rgb_float)
+
+    gt_mask_uint8 = None
+    if gt_mask_overlay is not None:
+        gt_mask_uint8 = _to_uint8_rgb(gt_mask_overlay)
+
+    gt_mask_binary_uint8 = None
+    if gt_mask_binary is not None:
+        gt_mask_binary_uint8 = _to_uint8_rgb(gt_mask_binary)
+
     gradcam_a_uint8 = _to_uint8_rgb(gradcam_overlay_a)
     gradcam_b_uint8 = _to_uint8_rgb(gradcam_overlay_b)
     gradcam_diff_uint8 = _to_uint8_rgb(gradcam_diff_overlay)
@@ -302,6 +322,18 @@ def make_panel_with_subtitles(
     gate_weighted_finercam_uint8 = None
     if gate_weighted_finercam_overlay is not None:
         gate_weighted_finercam_uint8 = _to_uint8_rgb(gate_weighted_finercam_overlay)
+
+    gate_weighted_gradcam_a_uint8 = None
+    if gate_weighted_gradcam_a_overlay is not None:
+        gate_weighted_gradcam_a_uint8 = _to_uint8_rgb(gate_weighted_gradcam_a_overlay)
+
+    gate_weighted_gradcam_b_uint8 = None
+    if gate_weighted_gradcam_b_overlay is not None:
+        gate_weighted_gradcam_b_uint8 = _to_uint8_rgb(gate_weighted_gradcam_b_overlay)
+
+    gate_weighted_map_diff_uint8 = None
+    if gate_weighted_map_diff_overlay is not None:
+        gate_weighted_map_diff_uint8 = _to_uint8_rgb(gate_weighted_map_diff_overlay)
     if panel_items is None:
         panel_items = ["rgb", "gradcam_a", "gradcam_b", "map_diff", "finercam"]
     rollout_uint8 = None
@@ -348,11 +380,28 @@ def make_panel_with_subtitles(
 
     tile_lookup = {
         "rgb": (rgb_uint8, first_tile_line1, first_tile_line2),
+        "rgb_gt_mask": (gt_mask_uint8, first_tile_line1, first_tile_line2),
+        "gt_mask": (gt_mask_binary_uint8, "GT mask", "binary mask"),
         "seg_gate": (seg_gate_uint8, seg_gate_line1, seg_gate_line2),
         "gradcam_a": (gradcam_a_uint8, gradcam_a_line1, gradcam_a_line2),
         "gradcam_b": (gradcam_b_uint8, gradcam_b_line1, gradcam_b_line2),
         "map_diff": (gradcam_diff_uint8, gradcam_diff_line1, gradcam_diff_line2),
         "finercam": (finercam_uint8, finercam_line1, finercam_line2),
+        "gate_weighted_gradcam_a": (
+            gate_weighted_gradcam_a_uint8,
+            gate_weighted_gradcam_a_line1,
+            gate_weighted_gradcam_a_line2,
+        ),
+        "gate_weighted_gradcam_b": (
+            gate_weighted_gradcam_b_uint8,
+            gate_weighted_gradcam_b_line1,
+            gate_weighted_gradcam_b_line2,
+        ),
+        "gate_weighted_map_diff": (
+            gate_weighted_map_diff_uint8,
+            gate_weighted_map_diff_line1,
+            gate_weighted_map_diff_line2,
+        ),
         "gate_weighted_finercam": (
             gate_weighted_finercam_uint8,
             gate_weighted_finercam_line1,

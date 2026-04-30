@@ -1,0 +1,14 @@
+[
+  {
+    "name": "Baseline",
+    "folder": "outputs/qual/cam_baseline_gt_topk3"
+  },
+  {
+    "name": "HA",
+    "folder": "outputs/qual/cam_ha_gt_topk3"
+  },
+  {
+    "name": "SegGate",
+    "folder": "outputs/qual/cam_seggate_gt_topk3"
+  }
+]
