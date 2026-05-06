@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Wrapper for PanDerm full finetuning with HA loss")
+    parser = argparse.ArgumentParser(description="Wrapper for PanDerm full finetuning with HA/DAL losses")
 
     parser.add_argument("--panderm-classification-dir", type=str, default="external/PanDerm/classification")
     parser.add_argument("--csv-path", type=str, required=True)
@@ -36,6 +36,14 @@ def parse_args():
     parser.add_argument("--mask-key", type=str, default="mask_rel_path")
     parser.add_argument("--ha-lambda", type=float, default=0.5)
     parser.add_argument("--ha-fp-weight", type=float, default=1.0)
+    parser.add_argument("--dal-lambda", type=float, default=0.0)
+    parser.add_argument(
+        "--dal-mode",
+        type=str,
+        default="all_classes",
+        choices=["all_classes", "topk_non_target"],
+    )
+    parser.add_argument("--dal-topk", type=int, default=3)
     parser.add_argument("--init-checkpoint", type=str, default="")
 
     parser.add_argument("--wandb-name", type=str, default="panderm_full_finetune_ham_ha")
@@ -93,6 +101,9 @@ def main():
         "--ha_lambda", str(args.ha_lambda),
         "--ha_fp_weight", str(args.ha_fp_weight),
         "--ha_loss_type", str(args.ha_loss_type),
+        "--dal_lambda", str(args.dal_lambda),
+        "--dal_mode", str(args.dal_mode),
+        "--dal_topk", str(args.dal_topk),
         "--disable_amp" if args.disable_amp else None,
     ]
 

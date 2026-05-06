@@ -1,7 +1,7 @@
 #!/bin/bash
-#SBATCH --job-name=panderm_ha_lam1_from_nomix_weighted
-#SBATCH --output=logs/panderm_ha_lam1_from_nomix_weighted_%j.out
-#SBATCH --error=logs/panderm_ha_lam1_from_nomix_weighted_%j.err
+#SBATCH --job-name=panderm_dal
+#SBATCH --output=logs/panderm_dal_%j.out
+#SBATCH --error=logs/panderm_dal_%j.err
 #SBATCH --time=12:00:00
 #SBATCH --mail-user=choekyel.nyungmartsang@students.unibe.ch
 #SBATCH --mail-type=END,FAIL
@@ -20,6 +20,32 @@ module load Anaconda3
 eval "$(conda shell.bash hook)"
 conda activate thesis
 
+# Toggle the explanation losses here.
+# You can either edit the defaults below or override them from the command line.
+#
+# Examples:
+#   DAL only, weak:
+#     HA_LAMBDA=0.0 DAL_LAMBDA=0.1 sbatch run_panderm_full_finetune_ha.sh
+#   HA + DAL, weak:
+#     HA_LAMBDA=1.0 DAL_LAMBDA=0.1 sbatch run_panderm_full_finetune_ha.sh
+#   DAL only, paper-like strength:
+#     HA_LAMBDA=0.0 DAL_LAMBDA=1.0 sbatch run_panderm_full_finetune_ha.sh
+#   Top-k DAL instead of all classes:
+#     HA_LAMBDA=1.0 DAL_LAMBDA=0.1 DAL_MODE=topk_non_target DAL_TOPK=3 sbatch run_panderm_full_finetune_ha.sh
+#
+# Current default if you simply run:
+#   sbatch run_panderm_full_finetune_ha.sh
+HA_LAMBDA=${HA_LAMBDA:-0.0}
+DAL_LAMBDA=${DAL_LAMBDA:-1.0}
+DAL_MODE=${DAL_MODE:-all_classes}
+DAL_TOPK=${DAL_TOPK:-3}
+
+if [[ "$HA_LAMBDA" == "0.0" || "$HA_LAMBDA" == "0" ]]; then
+  LOSS_TAG="dal${DAL_LAMBDA}"
+else
+  LOSS_TAG="ha${HA_LAMBDA}_dal${DAL_LAMBDA}"
+fi
+
 python -m run_panderm_full_finetune_ha \
   --panderm-classification-dir ../external/PanDerm/classification \
   --csv-path ../data/HAM10000/ham_segmentation_overlap.csv \
@@ -28,7 +54,7 @@ python -m run_panderm_full_finetune_ha \
   --mask-key mask_rel_path \
   --pretrained-checkpoint ../external/weights/panderm_bb_data6_checkpoint-499.pth \
   --init-checkpoint ../outputs/panderm_full_finetune/ham_base_nomix_weighted/checkpoint-best.pth \
-  --output-dir ../outputs/panderm_HA_lam1_from_nomix_weighted \
+  --output-dir ../outputs/panderm_${LOSS_TAG} \
   --model PanDerm_Base_FT \
   --nb-classes 7 \
   --batch-size 64 \
@@ -43,7 +69,10 @@ python -m run_panderm_full_finetune_ha \
   --monitor recall \
   --device cuda \
   --num-workers 4 \
-  --ha-lambda 1.0 \
+  --ha-lambda "$HA_LAMBDA" \
   --ha-loss-type paper_dice \
+  --dal-lambda "$DAL_LAMBDA" \
+  --dal-mode "$DAL_MODE" \
+  --dal-topk "$DAL_TOPK" \
   --debug-batches 0 \
   --disable-amp

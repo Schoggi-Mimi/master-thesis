@@ -21,9 +21,9 @@ eval "$(conda shell.bash hook)"
 conda activate thesis
 
 python run_class_finetuning_multitask_seg.py \
-  --model PanDerm_Large_FT \
+  --model PanDerm_Base_FT \
   --batch_size 8 \
-  --epochs 6 \
+  --epochs 10 \
   --update_freq 1 \
   --input_size 224 \
   --drop_path 0.2 \
@@ -38,11 +38,11 @@ python run_class_finetuning_multitask_seg.py \
   --image_key image_rel_path \
   --mask_key mask_rel_path \
   --nb_classes 7 \
-  --pretrained_checkpoint "$HOME/projects/master-thesis/external/weights/panderm_ll_data6_checkpoint-499.pth" \
-  --output_dir "$HOME/projects/master-thesis/outputs/panderm_seggate_lam1_bg015" \
+  --pretrained_checkpoint "$HOME/projects/master-thesis/external/weights/panderm_bb_data6_checkpoint-499.pth" \
+  --output_dir "$HOME/projects/master-thesis/outputs/panderm_seggate_lam1_bg05_lr5e6" \
   --seg_lambda 1.0 \
   --seg_loss_type bce_dice \
   --use_seg_gate \
   --seg_gate_bg_keep 0.05 \
-  --debug_batches 2 \
+  --debug_batches 0 \
   --disable_amp

@@ -37,7 +37,7 @@ python -m scripts.eval_cam_metrics_panderm \
   --topk_compare 3 \
   --mask_root data/HAM10000 \
   --mask_col mask_rel_path \
-  --methods gradcam_target,finercam,pred_seg_gate,gate_weighted_finercam
+  --methods gate_weighted_gradcam_target,gate_weighted_gradcam_reference,gate_weighted_gradcam_diff,gate_weighted_finercam,pred_seg_gate
 """
 
 from __future__ import annotations
@@ -156,7 +156,8 @@ def parse_args() -> argparse.Namespace:
             "Comma-separated CAM maps to evaluate. "
             "Default: gradcam_target,finercam. "
             "Options: gradcam_target,gradcam_reference,gradcam_diff,finercam,"
-            "pred_seg_gate,gate_weighted_finercam,rollout,chefer_style."
+            "pred_seg_gate,gate_weighted_gradcam_target,gate_weighted_gradcam_reference,"
+            "gate_weighted_gradcam_diff,gate_weighted_finercam,rollout,chefer_style."
         ),
     )
     p.add_argument(
@@ -301,6 +302,9 @@ def parse_methods(methods_arg: str) -> list[str]:
         "gradcam_diff",
         "finercam",
         "pred_seg_gate",
+        "gate_weighted_gradcam_target",
+        "gate_weighted_gradcam_reference",
+        "gate_weighted_gradcam_diff",
         "gate_weighted_finercam",
         "rollout",
         "chefer_style",
@@ -477,9 +481,22 @@ def main() -> None:
         )
 
         pred_seg_gate_cam = None
+        gate_weighted_gradcam_target_cam = None
+        gate_weighted_gradcam_reference_cam = None
+        gate_weighted_gradcam_diff_cam = None
         gate_weighted_finercam_cam = None
 
-        if "pred_seg_gate" in requested_methods or "gate_weighted_finercam" in requested_methods:
+        gate_weighted_methods = {
+            "gate_weighted_gradcam_target",
+            "gate_weighted_gradcam_reference",
+            "gate_weighted_gradcam_diff",
+            "gate_weighted_finercam",
+        }
+        needs_seg_gate_map = "pred_seg_gate" in requested_methods or any(
+            method in requested_methods for method in gate_weighted_methods
+        )
+
+        if needs_seg_gate_map:
             pred_seg_gate_cam = predict_seg_gate_map_for_metrics(
                 model_raw=model_raw,
                 input_tensor=image_tensor,
@@ -488,9 +505,33 @@ def main() -> None:
 
             if pred_seg_gate_cam is None:
                 raise ValueError(
-                    "Requested pred_seg_gate or gate_weighted_finercam, "
+                    "Requested pred_seg_gate or a gate_weighted_* CAM method, "
                     "but the loaded model does not expose predict_seg_gate_map(). "
                     "Use these methods only with --checkpoint_model_type multitask or seggate."
+                )
+
+        gradcam_diff_cam = bundle.get("cam_diff") if bundle.get("cam_diff") is not None else bundle.get("cam_gradcam_diff")
+
+        if "gate_weighted_gradcam_target" in requested_methods:
+            gate_weighted_gradcam_target_cam, _ = make_gate_weighted_cam_overlay(
+                cam_map=bundle["cam_gradcam"],
+                gate_map=pred_seg_gate_cam,
+                rgb_float=rgb_float,
+            )
+
+        if "gate_weighted_gradcam_reference" in requested_methods:
+            gate_weighted_gradcam_reference_cam, _ = make_gate_weighted_cam_overlay(
+                cam_map=bundle["cam_gradcam_B"],
+                gate_map=pred_seg_gate_cam,
+                rgb_float=rgb_float,
+            )
+
+        if "gate_weighted_gradcam_diff" in requested_methods:
+            if gradcam_diff_cam is not None:
+                gate_weighted_gradcam_diff_cam, _ = make_gate_weighted_cam_overlay(
+                    cam_map=gradcam_diff_cam,
+                    gate_map=pred_seg_gate_cam,
+                    rgb_float=rgb_float,
                 )
 
         if "gate_weighted_finercam" in requested_methods:
@@ -514,9 +555,12 @@ def main() -> None:
         cam_lookup = {
             "gradcam_target": bundle.get("cam_gradcam"),
             "gradcam_reference": bundle.get("cam_gradcam_B"),
-            "gradcam_diff": bundle.get("cam_diff"),
+            "gradcam_diff": gradcam_diff_cam,
             "finercam": bundle.get("cam_finercam"),
             "pred_seg_gate": pred_seg_gate_cam,
+            "gate_weighted_gradcam_target": gate_weighted_gradcam_target_cam,
+            "gate_weighted_gradcam_reference": gate_weighted_gradcam_reference_cam,
+            "gate_weighted_gradcam_diff": gate_weighted_gradcam_diff_cam,
             "gate_weighted_finercam": gate_weighted_finercam_cam,
             "rollout": bundle.get("cam_rollout"),
             "chefer_style": bundle.get("cam_chefer"),
