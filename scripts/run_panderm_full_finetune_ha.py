@@ -35,6 +35,12 @@ def parse_args():
     parser.add_argument("--image-key", type=str, default="image_rel_path")
     parser.add_argument("--mask-key", type=str, default="mask_rel_path")
     parser.add_argument("--ha-lambda", type=float, default=0.5)
+    parser.add_argument(
+        "--ha-start-epoch",
+        type=int,
+        default=0,
+        help="Epoch from which HA/DAL losses are activated. Before this epoch only CE is used.",
+    )
     parser.add_argument("--ha-fp-weight", type=float, default=1.0)
     parser.add_argument("--dal-lambda", type=float, default=0.0)
     parser.add_argument(
@@ -47,6 +53,8 @@ def parse_args():
     parser.add_argument("--init-checkpoint", type=str, default="")
 
     parser.add_argument("--wandb-name", type=str, default="panderm_full_finetune_ham_ha")
+    parser.add_argument("--wandb-project", type=str, default=os.environ.get("WANDB_PROJECT", "master-thesis-panderm-ha"))
+    parser.add_argument("--wandb-mode", type=str, default=os.environ.get("WANDB_MODE", "online"))
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--eval-only", action="store_true")
     parser.add_argument("--debug-batches", type=int, default=2)
@@ -99,6 +107,7 @@ def main():
         "--image_key", args.image_key,
         "--mask_key", args.mask_key,
         "--ha_lambda", str(args.ha_lambda),
+        "--ha_start_epoch", str(args.ha_start_epoch),
         "--ha_fp_weight", str(args.ha_fp_weight),
         "--ha_loss_type", str(args.ha_loss_type),
         "--dal_lambda", str(args.dal_lambda),
@@ -115,6 +124,8 @@ def main():
     cmd.extend([
         "--debug_batches", str(args.debug_batches),
         "--wandb_name", args.wandb_name,
+        "--wandb_project", args.wandb_project,
+        "--wandb_mode", args.wandb_mode,
     ])
 
     if args.weights:
