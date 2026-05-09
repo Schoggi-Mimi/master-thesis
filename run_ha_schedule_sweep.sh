@@ -9,7 +9,7 @@ for START in "${HA_START_EPOCHS[@]}"; do
     HA_LAMBDA="$LAMBDA" \
     HA_START_EPOCH="$START" \
     DAL_LAMBDA=0.0 \
-    WANDB_NAME="ha${LAMBDA}_start${START}" \
+    WANDB_NAME="foundation_ha${LAMBDA}_start${START}_dal0.0" \
     sbatch run_panderm_full_finetune_ha.sh
   done
 done

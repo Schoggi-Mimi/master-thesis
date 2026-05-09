@@ -48,34 +48,50 @@ HA_START_EPOCH=${HA_START_EPOCH:-0}
 DAL_LAMBDA=${DAL_LAMBDA:-0.0}
 DAL_MODE=${DAL_MODE:-all_classes}
 DAL_TOPK=${DAL_TOPK:-3}
+EPOCHS=${EPOCHS:-10}
+LR=${LR:-1e-5}
+
+HA_LOSS_TYPE=${HA_LOSS_TYPE:-paper_dice}
+
+CSV_PATH=${CSV_PATH:-../data/HAM10000/ham_segmentation_overlap.csv}
+ROOT_PATH=${ROOT_PATH:-../data/HAM10000}
+IMAGE_KEY=${IMAGE_KEY:-image_rel_path}
+MASK_KEY=${MASK_KEY:-mask_rel_path}
+NB_CLASSES=${NB_CLASSES:-7}
+EXPERIMENT_TAG=${EXPERIMENT_TAG:-foundation}
 
 WANDB_PROJECT=${WANDB_PROJECT:-master-thesis-panderm-ha}
-WANDB_NAME=${WANDB_NAME:-ha${HA_LAMBDA}_start${HA_START_EPOCH}_dal${DAL_LAMBDA}}
 
 if [[ "$HA_LAMBDA" == "0.0" || "$HA_LAMBDA" == "0" ]]; then
-  LOSS_TAG="dal${DAL_LAMBDA}_start${HA_START_EPOCH}"
+  if [[ "$DAL_LAMBDA" == "0.0" || "$DAL_LAMBDA" == "0" ]]; then
+    LOSS_TAG="${EXPERIMENT_TAG}_ce_classes${NB_CLASSES}_ep${EPOCHS}_lr${LR}"
+  else
+    LOSS_TAG="${EXPERIMENT_TAG}_dal${DAL_LAMBDA}_start${HA_START_EPOCH}_classes${NB_CLASSES}_ep${EPOCHS}_lr${LR}"
+  fi
 else
-  LOSS_TAG="ha${HA_LAMBDA}_start${HA_START_EPOCH}_dal${DAL_LAMBDA}"
+  LOSS_TAG="${EXPERIMENT_TAG}_ha${HA_LAMBDA}_start${HA_START_EPOCH}_${HA_LOSS_TYPE}_dal${DAL_LAMBDA}_classes${NB_CLASSES}_ep${EPOCHS}_lr${LR}"
 fi
+
+WANDB_NAME=${WANDB_NAME:-${LOSS_TAG}}
 
 export WANDB_PROJECT="$WANDB_PROJECT"
 export WANDB_NAME="$WANDB_NAME"
+export WANDB_ENTITY=${WANDB_ENTITY:-choekyel-nyungmartsang-university-of-bern}
 export WANDB_MODE=${WANDB_MODE:-online}
 
 python -m run_panderm_full_finetune_ha \
   --panderm-classification-dir ../external/PanDerm/classification \
-  --csv-path ../data/HAM10000/ham_segmentation_overlap.csv \
-  --root-path ../data/HAM10000 \
-  --image-key image_rel_path \
-  --mask-key mask_rel_path \
+  --csv-path "$CSV_PATH" \
+  --root-path "$ROOT_PATH" \
+  --image-key "$IMAGE_KEY" \
+  --mask-key "$MASK_KEY" \
   --pretrained-checkpoint ../external/weights/panderm_bb_data6_checkpoint-499.pth \
-  --init-checkpoint ../outputs/panderm_full_finetune/ham_base_nomix_weighted/checkpoint-best.pth \
   --output-dir ../outputs/panderm_${LOSS_TAG} \
   --model PanDerm_Base_FT \
-  --nb-classes 7 \
+  --nb-classes "$NB_CLASSES" \
   --batch-size 64 \
-  --epochs 10 \
-  --lr 1e-5 \
+  --epochs "$EPOCHS" \
+  --lr "$LR" \
   --weight-decay 0.05 \
   --warmup-epochs 1 \
   --layer-decay 0.65 \
@@ -87,12 +103,14 @@ python -m run_panderm_full_finetune_ha \
   --num-workers 4 \
   --ha-lambda "$HA_LAMBDA" \
   --ha-start-epoch "$HA_START_EPOCH" \
-  --ha-loss-type paper_dice \
+  --ha-loss-type "$HA_LOSS_TYPE" \
   --dal-lambda "$DAL_LAMBDA" \
   --dal-mode "$DAL_MODE" \
   --dal-topk "$DAL_TOPK" \
   --debug-batches 0 \
   --wandb-name "$WANDB_NAME" \
   --wandb-project "$WANDB_PROJECT" \
+  --wandb-entity "$WANDB_ENTITY" \
   --wandb-mode "$WANDB_MODE" \
+  --disable-color-jitter \
   --disable-amp

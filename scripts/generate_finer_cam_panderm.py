@@ -234,6 +234,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", type=str, default=None, help="cpu / cuda / mps (default: auto).")
     parser.add_argument("--method", type=str, default="finercam", choices=["gradcam", "layercam", "finercam"], help="CAM backend for the main triplet.")
     parser.add_argument(
+        "--target_block_index",
+        type=int,
+        default=-2,
+        help=(
+            "Transformer block index used for CAM target layer. "
+            "Default -2 = second-to-last block. Try -4, -6, -8 for layer sensitivity."
+        ),
+    )
+    parser.add_argument(
         "--compare_mode",
         type=str,
         default="top2",
@@ -265,6 +274,11 @@ def parse_args() -> argparse.Namespace:
         "--save_json",
         action="store_true",
         help="If set, also save one metadata JSON file per image. Default: off.",
+    )
+    parser.add_argument(
+        "--save_raw_cams",
+        action="store_true",
+        help="If set, save raw CAM arrays as .npy files for quantitative localization metrics.",
     )
     parser.add_argument(
         "--panel_scale",
@@ -795,6 +809,51 @@ def make_safe_output_stem(image_id: str) -> str:
     stem = image_path.stem if image_path.suffix else image_path.name
     stem = stem.replace("/", "_").replace("\\", "_").replace(" ", "_")
     return stem
+
+def save_raw_cam_arrays(
+    out_dir: Path,
+    output_stem: str,
+    res: dict,
+    gate_weighted_maps: dict[str, np.ndarray | None] | None = None,
+) -> Path:
+    """Save raw CAM arrays for quantitative localization metrics."""
+    raw_dir = out_dir / "raw_cams" / output_stem
+    raw_dir.mkdir(parents=True, exist_ok=True)
+
+    flat_raw_dir = out_dir / "raw_cams"
+    flat_raw_dir.mkdir(parents=True, exist_ok=True)
+
+    cam_key_to_name = {
+        "cam_gradcam": "gradcam_a",
+        "cam_gradcam_B": "gradcam_b",
+        "cam_gradcam_diff": "map_diff",
+        "cam_finercam": "finercam",
+        "cam_rollout": "rollout",
+        "cam_chefer": "chefer_a",
+        "cam_chefer_B": "chefer_b",
+        "cam_chefer_diff": "chefer_diff",
+        "cam_relprop_chefer": "relprop_chefer_a",
+        "cam_relprop_chefer_B": "relprop_chefer_b",
+        "cam_relprop_chefer_diff": "relprop_chefer_diff",
+    }
+
+    for cam_key, file_name in cam_key_to_name.items():
+        cam_value = res.get(cam_key)
+        if cam_value is None:
+            continue
+        cam_array = np.asarray(cam_value, dtype=np.float32)
+        np.save(raw_dir / f"{file_name}.npy", cam_array)
+        np.save(flat_raw_dir / f"{output_stem}_{file_name}.npy", cam_array)
+
+    if gate_weighted_maps is not None:
+        for file_name, cam_value in gate_weighted_maps.items():
+            if cam_value is None:
+                continue
+            cam_array = np.asarray(cam_value, dtype=np.float32)
+            np.save(raw_dir / f"{file_name}.npy", cam_array)
+            np.save(flat_raw_dir / f"{output_stem}_{file_name}.npy", cam_array)
+
+    return raw_dir
 # --- End: helper for safe output stem ---
 
 
@@ -1095,9 +1154,26 @@ def main() -> None:
         ])
 
     if hasattr(model_raw, "backbone"):
-        target_layer = model_raw.backbone.blocks[-1].norm1
+        blocks = model_raw.backbone.blocks
     else:
-        target_layer = model_raw.blocks[-1].norm1
+        blocks = model_raw.blocks
+
+    target_block_index = int(args.target_block_index)
+
+    if target_block_index < 0:
+        target_block_index = len(blocks) + target_block_index
+
+    if target_block_index < 0 or target_block_index >= len(blocks):
+        raise ValueError(
+            f"--target_block_index={args.target_block_index} is invalid. "
+            f"Model has {len(blocks)} blocks, valid resolved indices are 0 to {len(blocks) - 1}."
+        )
+
+    target_layer = blocks[target_block_index].norm1
+    print(
+        f"[info] CAM target layer: blocks[{target_block_index}].norm1 "
+        f"(requested {args.target_block_index})"
+    )
 
     df = pd.read_csv(csv_path)
     if args.crop_with_mask:
@@ -1298,28 +1374,43 @@ def main() -> None:
             include_extra_maps=args.show_extra_rows,
         )
 
-        gate_weighted_gradcam_a, gate_weighted_gradcam_a_overlay = make_gate_weighted_cam_overlay(
+        gate_weighted_gradcam_a_map, gate_weighted_gradcam_a_overlay = make_gate_weighted_cam_overlay(
             cam_map=res["cam_gradcam"],
             gate_map=seg_gate_map,
             rgb_float=rgb_resized,
         )
-        gate_weighted_gradcam_b, gate_weighted_gradcam_b_overlay = make_gate_weighted_cam_overlay(
+        gate_weighted_gradcam_b_map, gate_weighted_gradcam_b_overlay = make_gate_weighted_cam_overlay(
             cam_map=res["cam_gradcam_B"],
             gate_map=seg_gate_map,
             rgb_float=rgb_resized,
         )
-        gate_weighted_map_diff, gate_weighted_map_diff_overlay = make_gate_weighted_cam_overlay(
+        gate_weighted_map_diff_map, gate_weighted_map_diff_overlay = make_gate_weighted_cam_overlay(
             cam_map=res["cam_gradcam_diff"],
             gate_map=seg_gate_map,
             rgb_float=rgb_resized,
         )
-        gate_weighted_finercam, gate_weighted_finercam_overlay = make_gate_weighted_cam_overlay(
+        gate_weighted_finercam_map, gate_weighted_finercam_overlay = make_gate_weighted_cam_overlay(
             cam_map=res["cam_finercam"],
             gate_map=seg_gate_map,
             rgb_float=rgb_resized,
         )
 
-        top3_idx = np.argsort(res["probs"])[-3:][::-1]
+        if args.save_raw_cams:
+            raw_cam_dir = save_raw_cam_arrays(
+                out_dir=out_dir,
+                output_stem=output_stem,
+                res=res,
+                gate_weighted_maps={
+                    "gate_weighted_gradcam_a": gate_weighted_gradcam_a_map,
+                    "gate_weighted_gradcam_b": gate_weighted_gradcam_b_map,
+                    "gate_weighted_map_diff": gate_weighted_map_diff_map,
+                    "gate_weighted_finercam": gate_weighted_finercam_map,
+                },
+            )
+            print(f"[saved raw cams] {raw_cam_dir}")
+
+        topk_for_display = min(3, len(res["probs"]))
+        top3_idx = np.argsort(res["probs"])[-topk_for_display:][::-1]
         top3_named = ", ".join([f"{idx_to_class[i]}: {res['probs'][i]:.3f}" for i in top3_idx])
 
         A_name = idx_to_class.get(int(res["A"]), str(res["A"]))
@@ -1429,17 +1520,17 @@ def main() -> None:
                 "comparison_category_names": [idx_to_class[int(i)] for i in res.get("comparison_categories", [res["B"]])],
                 "topk_compare": int(args.topk_compare),
                 "alpha": float(args.alpha),
-                "probs_top3": res["probs_top3"],
+                "probs_topk": res["probs_top3"],
+                "num_classes": len(class_names),
+                "raw_cam_dir": str((out_dir / "raw_cams" / output_stem).relative_to(out_dir)) if args.save_raw_cams else None,
                 "method": args.method,
                 "panel_path": str(panel_path),
                 "compare_mode": args.compare_mode,
                 "A_name": A_name,
                 "B_name": B_name,
-                "target_layer": (
-                    "model_raw.backbone.blocks[-1].norm1"
-                    if hasattr(model_raw, "backbone")
-                    else "model_raw.blocks[-1].norm1"
-                ),
+                "target_layer": f"blocks[{target_block_index}].norm1",
+                "target_block_index": int(target_block_index),
+                "target_block_index_requested": int(args.target_block_index),
                 "class_names": class_names,
                 "class_preset": args.class_preset,
                 "checkpoint_format": info.get("checkpoint_format"),

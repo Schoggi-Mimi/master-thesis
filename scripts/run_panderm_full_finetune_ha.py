@@ -54,11 +54,17 @@ def parse_args():
 
     parser.add_argument("--wandb-name", type=str, default="panderm_full_finetune_ham_ha")
     parser.add_argument("--wandb-project", type=str, default=os.environ.get("WANDB_PROJECT", "master-thesis-panderm-ha"))
+    parser.add_argument("--wandb-entity", type=str, default=os.environ.get("WANDB_ENTITY", ""))
     parser.add_argument("--wandb-mode", type=str, default=os.environ.get("WANDB_MODE", "online"))
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--eval-only", action="store_true")
     parser.add_argument("--debug-batches", type=int, default=2)
     parser.add_argument("--ha-loss-type", type=str, default="paper_dice", choices=["paper_dice", "alignment"])
+    parser.add_argument(
+        "--disable-color-jitter",
+        action="store_true",
+        help="Disable color jitter in both HA paired transforms and CE-only transforms.",
+    )
     parser.add_argument("--disable-amp", action="store_true")
 
     return parser.parse_args()
@@ -121,10 +127,14 @@ def main():
     if args.init_checkpoint:
         cmd.extend(["--init_checkpoint", str(Path(args.init_checkpoint).resolve())])
 
+    if args.disable_color_jitter:
+        cmd.append("--disable_color_jitter")
+
     cmd.extend([
         "--debug_batches", str(args.debug_batches),
         "--wandb_name", args.wandb_name,
         "--wandb_project", args.wandb_project,
+        "--wandb_entity", args.wandb_entity,
         "--wandb_mode", args.wandb_mode,
     ])
 

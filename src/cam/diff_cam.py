@@ -435,7 +435,8 @@ def compute_cam_bundle(
         probs_t = torch.softmax(logits, dim=1)[0]
 
     probs = probs_t.detach().cpu().numpy()
-    probs_top3 = torch.topk(probs_t, 3).values.detach().cpu().tolist()
+    topk_for_display = min(3, int(probs_t.numel()))
+    probs_top3 = torch.topk(probs_t, topk_for_display).values.detach().cpu().tolist()
 
     cam_A, cam_B_grad, cam_diff_grad, vis_A, vis_B_grad, vis_diff_grad = _run_standard_cam(
         GradCAM,
