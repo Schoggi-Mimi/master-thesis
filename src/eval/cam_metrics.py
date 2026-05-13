@@ -204,7 +204,8 @@ class DeletionMetric:
             confidence_curve.append(float(np.mean(per_sample_conf)))
 
         # Compute area under curve (normalized)
-        auc = float(np.trapezoid(confidence_curve, dx=1.0 / self.num_steps))
+        # auc = float(np.trapezoid(confidence_curve, dx=1.0 / self.num_steps))
+        auc = float(np.trapz(confidence_curve, dx=1.0 / self.num_steps))
 
         results = {
             'original_confidence': float(original_conf.mean().item()),
@@ -302,7 +303,8 @@ class InsertionMetric:
             confidence_curve.append(float(np.mean(per_sample_conf)))
 
         # Compute area under curve (normalized)
-        auc = float(np.trapezoid(confidence_curve, dx=1.0 / self.num_steps))
+        # auc = float(np.trapezoid(confidence_curve, dx=1.0 / self.num_steps))
+        auc = float(np.trapz(confidence_curve, dx=1.0 / self.num_steps))
 
         results = {
             'original_confidence': float(original_conf.mean().item()),

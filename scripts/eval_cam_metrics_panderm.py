@@ -149,6 +149,15 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--B", type=str, default=None, help="Fixed reference class name for compare_mode=fixed.")
     p.add_argument("--cam_target_layer", type=str, default="last_block")
     p.add_argument(
+        "--target_block_index",
+        type=int,
+        default=-1,
+        help=(
+            "Transformer block index used as CAM target layer. "
+            "Use -1 for the last block, -4 for the fourth block from the end, etc."
+        ),
+    )
+    p.add_argument(
         "--methods",
         type=str,
         default="gradcam_target,finercam",
@@ -179,6 +188,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--mask_value", type=float, default=0.0)
 
     p.add_argument("--image_col", type=str, default="image")
+    p.add_argument(
+        "--gt_col",
+        type=str,
+        default=None,
+        help="Optional ground-truth class-name column. Accepted for compatibility with CAM generation notebooks.",
+    )
     p.add_argument("--label_col", type=str, default="label")
     p.add_argument("--id_col", type=str, default="image_id")
     
@@ -310,21 +325,50 @@ def parse_methods(methods_arg: str) -> list[str]:
         "chefer_style",
     }
 
-    methods = [m.strip() for m in str(methods_arg).split(",") if m.strip()]
+    basic_all = [
+        "gradcam_target",
+        "gradcam_reference",
+        "gradcam_diff",
+        "finercam",
+    ]
+    full_all = basic_all + [
+        "rollout",
+        "chefer_style",
+    ]
+
+    methods_arg = str(methods_arg).strip()
+    if methods_arg == "all":
+        return basic_all
+    if methods_arg == "all_with_extra":
+        return full_all
+
+    methods = [m.strip() for m in methods_arg.split(",") if m.strip()]
     if not methods:
         raise ValueError("--methods produced an empty method list.")
 
     unknown = [m for m in methods if m not in allowed]
     if unknown:
-        raise ValueError(f"Unknown methods in --methods: {unknown}. Allowed: {sorted(allowed)}")
+        raise ValueError(f"Unknown methods in --methods: {unknown}. Allowed: {sorted(allowed)} plus aliases: all, all_with_extra")
 
     return methods
 
 
-def get_cam_target_layer(model_raw: torch.nn.Module):
-    if hasattr(model_raw, "backbone"):
-        return model_raw.backbone.blocks[-1].norm1
-    return model_raw.blocks[-1].norm1
+def get_cam_target_layer(model_raw: torch.nn.Module, target_block_index: int = -1):
+    blocks = model_raw.backbone.blocks if hasattr(model_raw, "backbone") else model_raw.blocks
+    n_blocks = len(blocks)
+
+    if target_block_index < 0:
+        resolved_index = n_blocks + target_block_index
+    else:
+        resolved_index = target_block_index
+
+    if resolved_index < 0 or resolved_index >= n_blocks:
+        raise ValueError(
+            f"target_block_index={target_block_index} resolves to {resolved_index}, "
+            f"but model has {n_blocks} blocks."
+        )
+
+    return blocks[resolved_index].norm1
 
 
 @torch.no_grad()
@@ -380,7 +424,8 @@ def main() -> None:
     )
     model = PanDermCAMWrapper(model_raw)
     model.eval()
-    target_layer = get_cam_target_layer(model_raw)
+    target_layer = get_cam_target_layer(model_raw, target_block_index=args.target_block_index)
+    print(f"Using CAM target_block_index={args.target_block_index}")
 
     transform = build_eval_transform()
     rel_conf_metric = RelativeConfidenceDropMetric(
@@ -405,7 +450,18 @@ def main() -> None:
     for _, row in tqdm(df.iterrows(), total=len(df), desc="evaluating"):
         image_name = str(row[args.image_col])
         image_id = str(row[args.id_col]) if args.id_col in row else Path(image_name).stem
-        gt_idx = int(row[args.label_col]) if args.label_col in row else None
+        gt_idx = int(row[args.label_col]) if args.label_col in row and not pd.isna(row[args.label_col]) else None
+
+        if gt_idx is None and args.gt_col is not None and args.gt_col in row and not pd.isna(row[args.gt_col]):
+            gt_name_from_col = str(row[args.gt_col]).strip()
+            if gt_name_from_col in class_to_idx:
+                gt_idx = int(class_to_idx[gt_name_from_col])
+            elif gt_name_from_col.upper() in class_to_idx:
+                gt_idx = int(class_to_idx[gt_name_from_col.upper()])
+            elif gt_name_from_col.lower() in {name.lower(): idx for name, idx in class_to_idx.items()}:
+                lower_map = {name.lower(): idx for name, idx in class_to_idx.items()}
+                gt_idx = int(lower_map[gt_name_from_col.lower()])
+
         gt_name = class_names[gt_idx] if gt_idx is not None and 0 <= gt_idx < len(class_names) else None
 
         if image_name.endswith(".jpg") or image_name.endswith(".jpeg") or image_name.endswith(".png"):
@@ -672,6 +728,7 @@ def main() -> None:
                     "use_seg_gate": info.get("use_seg_gate"),
                     "seg_gate_bg_keep": info.get("seg_gate_bg_keep"),
                     "methods_requested": requested_methods,
+                    "target_block_index": args.target_block_index,
                     "relative_confidence_drop": rel_conf_res,
                     "deletion": del_res,
                     "insertion": ins_res,

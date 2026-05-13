@@ -50,6 +50,9 @@ DAL_MODE=${DAL_MODE:-all_classes}
 DAL_TOPK=${DAL_TOPK:-3}
 EPOCHS=${EPOCHS:-10}
 LR=${LR:-1e-5}
+MIXUP=${MIXUP:-0.0}
+CUTMIX=${CUTMIX:-0.0}
+SMOOTHING=${SMOOTHING:-0.0}
 
 HA_LOSS_TYPE=${HA_LOSS_TYPE:-paper_dice}
 
@@ -101,6 +104,9 @@ python -m run_panderm_full_finetune_ha \
   --monitor recall \
   --device cuda \
   --num-workers 4 \
+  --mixup "$MIXUP" \
+  --cutmix "$CUTMIX" \
+  --smoothing "$SMOOTHING" \
   --ha-lambda "$HA_LAMBDA" \
   --ha-start-epoch "$HA_START_EPOCH" \
   --ha-loss-type "$HA_LOSS_TYPE" \

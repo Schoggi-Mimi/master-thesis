@@ -66,6 +66,24 @@ def parse_args():
         help="Disable color jitter in both HA paired transforms and CE-only transforms.",
     )
     parser.add_argument("--disable-amp", action="store_true")
+    parser.add_argument(
+        "--mixup",
+        type=float,
+        default=0.0,
+        help="MixUp alpha passed to the PanDerm training script. Keep 0.0 for clean baseline/HA comparison.",
+    )
+    parser.add_argument(
+        "--cutmix",
+        type=float,
+        default=0.0,
+        help="CutMix alpha passed to the PanDerm training script. Keep 0.0 for clean baseline/HA comparison.",
+    )
+    parser.add_argument(
+        "--smoothing",
+        type=float,
+        default=0.0,
+        help="Label smoothing passed to the PanDerm training script. Keep 0.0 for clean baseline/HA comparison.",
+    )
 
     return parser.parse_args()
 
@@ -112,6 +130,9 @@ def main():
         "--device", args.device,
         "--image_key", args.image_key,
         "--mask_key", args.mask_key,
+        "--mixup", str(args.mixup),
+        "--cutmix", str(args.cutmix),
+        "--smoothing", str(args.smoothing),
         "--ha_lambda", str(args.ha_lambda),
         "--ha_start_epoch", str(args.ha_start_epoch),
         "--ha_fp_weight", str(args.ha_fp_weight),
