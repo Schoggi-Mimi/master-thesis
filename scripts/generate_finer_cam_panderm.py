@@ -287,6 +287,20 @@ def parse_args() -> argparse.Namespace:
         help="Scale factor used to enlarge the tiles in the saved panel.",
     )
     parser.add_argument(
+        "--clinician_labels",
+        action="store_true",
+        help=(
+            "Use clinician-friendly panel subtitles: Image, XAI 0, XAI 1, XAI 2, "
+            "and prediction correct/wrong instead of class probabilities."
+        ),
+    )
+    parser.add_argument(
+        "--model_display_name",
+        type=str,
+        default=None,
+        help="Optional short model name for metadata / future clinician-facing panels.",
+    )
+    parser.add_argument(
         "--show_relprop_row",
         action="store_true",
         help="If set, add a third row with relprop-Chefer maps. Default: off.",
@@ -1434,13 +1448,114 @@ def main() -> None:
             )
         else:
             gt_label = None
+        pred_idx = int(sorted_idx[0])
+        pred_label = idx_to_class.get(pred_idx, str(pred_idx))
+        prediction_correct = bool(gt_label is not None and pred_label == gt_label)
+        pred_confidence = float(res["probs"][pred_idx])
+
+        prediction_status_with_conf = (
+            f"Prediction: correct ({pred_confidence * 100:.1f}%)"
+            if prediction_correct
+            else f"Prediction: wrong ({pred_confidence * 100:.1f}%)"
+        )
+
+        prediction_status_color = (0, 140, 0) if prediction_correct else (190, 0, 0)
+        prediction_status = "Prediction: correct" if prediction_correct else "Prediction: wrong"
         gradcam_a_prob = float(res["probs"][int(res["A"])])
         gradcam_b_prob = float(res["probs"][int(res["B"])])
         finercam_prob = float(res["probs"][int(res["A"])])
         rollout_prob = float(res["probs"][int(res["A"])])
 
-        first_tile_line1 = str(image_id)
-        first_tile_line2 = f"GT={gt_label}" if gt_label is not None else "RGB"
+        if args.clinician_labels:
+            first_tile_line1 = "Image + lesion outline"
+            first_tile_line2 = f"Ground truth: {gt_label}" if gt_label is not None else "Original image"
+
+            gradcam_a_line1 = "XAI 0"
+            gradcam_a_line2 = prediction_status_with_conf
+            gradcam_a_line2_color = prediction_status_color
+
+            gradcam_b_line1 = "XAI 0 reference"
+            gradcam_b_line2 = f"Reference: {B_name}"
+
+            gradcam_diff_line1 = "XAI 1"
+            gradcam_diff_line2 = f"{A_name} vs {B_name}"
+
+            finercam_line1 = "XAI 2"
+            finercam_line2 = f"{A_name} vs {B_name}"
+
+            gate_weighted_finercam_line1 = "XAI 2"
+            gate_weighted_finercam_line2 = f"{A_name} vs {B_name}"
+
+            gate_weighted_gradcam_a_line1 = "XAI 0"
+            gate_weighted_gradcam_a_line2 = prediction_status_with_conf
+            gate_weighted_gradcam_a_line2_color = prediction_status_color
+
+            gate_weighted_gradcam_b_line1 = "XAI 0 reference"
+            gate_weighted_gradcam_b_line2 = f"Reference: {B_name}"
+
+            gate_weighted_map_diff_line1 = "XAI 1"
+            gate_weighted_map_diff_line2 = f"{A_name} vs {B_name}"
+
+            rollout_line1 = "Attention overview"
+            rollout_line2 = f"{A_name}"
+
+            chefer_a_line1 = "Transformer attribution"
+            chefer_a_line2 = f"{A_name}"
+
+            chefer_b_line1 = "Transformer attribution"
+            chefer_b_line2 = f"{B_name}"
+
+            chefer_diff_line1 = "Transformer contrast"
+            chefer_diff_line2 = f"{A_name} vs {B_name}"
+
+            relprop_chefer_a_line1 = "RelProp attribution"
+            relprop_chefer_a_line2 = f"{A_name}"
+
+            relprop_chefer_b_line1 = "RelProp attribution"
+            relprop_chefer_b_line2 = f"{B_name}"
+
+            relprop_chefer_diff_line1 = "RelProp contrast"
+            relprop_chefer_diff_line2 = f"{A_name} vs {B_name}"
+
+            seg_gate_line1 = "Lesion focus map"
+            seg_gate_line2 = "auxiliary mask prediction"
+        else:
+            first_tile_line1 = str(image_id)
+            first_tile_line2 = f"GT={gt_label}" if gt_label is not None else "RGB"
+            gradcam_a_line1 = "GradCAM"
+            gradcam_a_line2 = f"{A_name} ({gradcam_a_prob:.2f})"
+            gradcam_a_line2_color = None
+            gradcam_b_line1 = "GradCAM"
+            gradcam_b_line2 = f"{B_name} ({gradcam_b_prob:.2f})"
+            gradcam_diff_line1 = "Map Diff"
+            gradcam_diff_line2 = f"max(0, {A_name} - {B_name})"
+            finercam_line1 = "FinerCAM"
+            finercam_line2 = f"{A_name} vs {B_name} ({finercam_prob:.2f})"
+            gate_weighted_finercam_line1 = "Gate weighted FinerCAM"
+            gate_weighted_finercam_line2 = f"{A_name} FinerCAM × gate"
+            gate_weighted_gradcam_a_line1 = "GradCAM × gate"
+            gate_weighted_gradcam_a_line2 = f"{A_name} ({gradcam_a_prob:.2f})"
+            gate_weighted_gradcam_a_line2_color = None
+            gate_weighted_gradcam_b_line1 = "GradCAM × gate"
+            gate_weighted_gradcam_b_line2 = f"{B_name} ({gradcam_b_prob:.2f})"
+            gate_weighted_map_diff_line1 = "Map Diff × gate"
+            gate_weighted_map_diff_line2 = f"max(0, {A_name} - {B_name}) × gate"
+            rollout_line1 = "Rollout"
+            rollout_line2 = f"{A_name} ({rollout_prob:.2f})"
+            chefer_a_line1 = "Chefer-style"
+            chefer_a_line2 = f"{A_name}"
+            chefer_b_line1 = "Chefer-style"
+            chefer_b_line2 = f"{B_name}"
+            chefer_diff_line1 = "Chefer Map Diff"
+            chefer_diff_line2 = f"max(0, {A_name} - {B_name})"
+            relprop_chefer_a_line1 = "Chefer relprop"
+            relprop_chefer_a_line2 = f"{A_name}"
+            relprop_chefer_b_line1 = "Chefer relprop"
+            relprop_chefer_b_line2 = f"{B_name}"
+            relprop_chefer_diff_line1 = "Relprop Map Diff"
+            relprop_chefer_diff_line2 = f"max(0, {A_name} - {B_name})"
+            seg_gate_line1 = "Predicted Seg Gate"
+            seg_gate_line2 = "auxiliary head"
 
         panel_img_uint8 = make_panel_with_subtitles(
             first_tile_line1=first_tile_line1,
@@ -1450,52 +1565,54 @@ def main() -> None:
             gt_mask_binary=gt_mask_binary,
             seg_gate_overlay=seg_gate_overlay,
             gradcam_overlay_a=res["overlay_gradcam"],
+            gradcam_a_line1=gradcam_a_line1,
+            gradcam_a_line2=gradcam_a_line2,
+            gradcam_a_line2_color=gradcam_a_line2_color,
             gradcam_overlay_b=res["overlay_gradcam_B"],
+            gradcam_b_line1=gradcam_b_line1,
+            gradcam_b_line2=gradcam_b_line2,
             gradcam_diff_overlay=res["overlay_gradcam_diff"],
+            gradcam_diff_line1=gradcam_diff_line1,
+            gradcam_diff_line2=gradcam_diff_line2,
             finercam_overlay=res["overlay_finercam"],
+            finercam_line1=finercam_line1,
+            finercam_line2=finercam_line2,
             gate_weighted_finercam_overlay=gate_weighted_finercam_overlay,
+            gate_weighted_finercam_line1=gate_weighted_finercam_line1,
+            gate_weighted_finercam_line2=gate_weighted_finercam_line2,
             gate_weighted_gradcam_a_overlay=gate_weighted_gradcam_a_overlay,
+            gate_weighted_gradcam_a_line1=gate_weighted_gradcam_a_line1,
+            gate_weighted_gradcam_a_line2=gate_weighted_gradcam_a_line2,
+            gate_weighted_gradcam_a_line2_color=gate_weighted_gradcam_a_line2_color,
             gate_weighted_gradcam_b_overlay=gate_weighted_gradcam_b_overlay,
+            gate_weighted_gradcam_b_line1=gate_weighted_gradcam_b_line1,
+            gate_weighted_gradcam_b_line2=gate_weighted_gradcam_b_line2,
             gate_weighted_map_diff_overlay=gate_weighted_map_diff_overlay,
+            gate_weighted_map_diff_line1=gate_weighted_map_diff_line1,
+            gate_weighted_map_diff_line2=gate_weighted_map_diff_line2,
             rollout_overlay=res["overlay_rollout"],
+            rollout_line1=rollout_line1,
+            rollout_line2=rollout_line2,
             chefer_overlay_a=res["overlay_chefer"],
+            chefer_a_line1=chefer_a_line1,
+            chefer_a_line2=chefer_a_line2,
             chefer_overlay_b=res["overlay_chefer_B"],
+            chefer_b_line1=chefer_b_line1,
+            chefer_b_line2=chefer_b_line2,
             chefer_diff_overlay=res["overlay_chefer_diff"],
+            chefer_diff_line1=chefer_diff_line1,
+            chefer_diff_line2=chefer_diff_line2,
             relprop_chefer_overlay_a=res["overlay_relprop_chefer"],
+            relprop_chefer_a_line1=relprop_chefer_a_line1,
+            relprop_chefer_a_line2=relprop_chefer_a_line2,
             relprop_chefer_overlay_b=res["overlay_relprop_chefer_B"],
+            relprop_chefer_b_line1=relprop_chefer_b_line1,
+            relprop_chefer_b_line2=relprop_chefer_b_line2,
             relprop_chefer_diff_overlay=res["overlay_relprop_chefer_diff"],
-            gradcam_a_line1="GradCAM",
-            gradcam_a_line2=f"{A_name} ({gradcam_a_prob:.2f})",
-            gradcam_b_line1="GradCAM",
-            gradcam_b_line2=f"{B_name} ({gradcam_b_prob:.2f})",
-            gradcam_diff_line1="Map Diff",
-            gradcam_diff_line2=f"max(0, {A_name} - {B_name})",
-            finercam_line1="FinerCAM",
-            finercam_line2=f"{A_name} vs {B_name} ({finercam_prob:.2f})",
-            gate_weighted_finercam_line1="Gate weighted FinerCAM",
-            gate_weighted_finercam_line2=f"{A_name} FinerCAM × gate",
-            gate_weighted_gradcam_a_line1="GradCAM × gate",
-            gate_weighted_gradcam_a_line2=f"{A_name} ({gradcam_a_prob:.2f})",
-            gate_weighted_gradcam_b_line1="GradCAM × gate",
-            gate_weighted_gradcam_b_line2=f"{B_name} ({gradcam_b_prob:.2f})",
-            gate_weighted_map_diff_line1="Map Diff × gate",
-            gate_weighted_map_diff_line2=f"max(0, {A_name} - {B_name}) × gate",
-            rollout_line1="Rollout",
-            rollout_line2=f"{A_name} ({rollout_prob:.2f})",
-            chefer_a_line1="Chefer-style",
-            chefer_a_line2=f"{A_name}",
-            chefer_b_line1="Chefer-style",
-            chefer_b_line2=f"{B_name}",
-            chefer_diff_line1="Chefer Map Diff",
-            chefer_diff_line2=f"max(0, {A_name} - {B_name})",
-            relprop_chefer_a_line1="Chefer relprop",
-            relprop_chefer_a_line2=f"{A_name}",
-            relprop_chefer_b_line1="Chefer relprop",
-            relprop_chefer_b_line2=f"{B_name}",
-            relprop_chefer_diff_line1="Relprop Map Diff",
-            relprop_chefer_diff_line2=f"max(0, {A_name} - {B_name})",
-            seg_gate_line1="Predicted Seg Gate",
-            seg_gate_line2="auxiliary head",
+            relprop_chefer_diff_line1=relprop_chefer_diff_line1,
+            relprop_chefer_diff_line2=relprop_chefer_diff_line2,
+            seg_gate_line1=seg_gate_line1,
+            seg_gate_line2=seg_gate_line2,
             scale=args.panel_scale,
             show_extra_row=args.show_extra_rows,
             show_relprop_row=args.show_relprop_row,
@@ -1511,6 +1628,11 @@ def main() -> None:
                 "image_id": str(image_id),
                 "img_path": str(img_path),
                 "checkpoint": ckpt_path.name,
+                "model_display_name": args.model_display_name,
+                "clinician_labels": bool(args.clinician_labels),
+                "pred_label": pred_label,
+                "prediction_correct": prediction_correct,
+                "prediction_status": prediction_status,
                 "model_type": "panderm_ft",
                 "image_size": image_size,
                 "device": device,

@@ -50,197 +50,6 @@ def _load_font(size: int, bold: bool = False):
             continue
     return ImageFont.load_default()
 
-
-# def make_panel_with_subtitles_old(
-#     first_tile_line1: str,
-#     first_tile_line2: str,
-#     rgb_float: np.ndarray,
-#     gradcam_overlay_a: np.ndarray,
-#     gradcam_overlay_b: np.ndarray,
-#     gradcam_diff_overlay: np.ndarray,
-#     finercam_overlay: np.ndarray,
-#     rollout_overlay: np.ndarray,
-#     chefer_overlay: np.ndarray,
-#     gradcam_a_line1: str,
-#     gradcam_a_line2: str,
-#     gradcam_b_line1: str,
-#     gradcam_b_line2: str,
-#     gradcam_diff_line1: str,
-#     gradcam_diff_line2: str,
-#     finercam_line1: str,
-#     finercam_line2: str,
-#     rollout_line1: str,
-#     rollout_line2: str,
-#     chefer_line1: str,
-#     chefer_line2: str,
-#     scale: float = 1.35,
-# ) -> np.ndarray:
-#     rgb_uint8 = _to_uint8_rgb(rgb_float)
-#     gradcam_a_uint8 = _to_uint8_rgb(gradcam_overlay_a)
-#     gradcam_b_uint8 = _to_uint8_rgb(gradcam_overlay_b)
-#     gradcam_diff_uint8 = _to_uint8_rgb(gradcam_diff_overlay)
-#     finercam_uint8 = _to_uint8_rgb(finercam_overlay)
-#     rollout_uint8 = _to_uint8_rgb(rollout_overlay)
-#     chefer_uint8 = _to_uint8_rgb(chefer_overlay)
-
-#     tiles = [
-#         rgb_uint8,
-#         gradcam_a_uint8,
-#         gradcam_b_uint8,
-#         gradcam_diff_uint8,
-#         finercam_uint8,
-#         rollout_uint8,
-#         chefer_uint8,
-#     ]
-#     subtitle_pairs = [
-#         (first_tile_line1, first_tile_line2),
-#         (gradcam_a_line1, gradcam_a_line2),
-#         (gradcam_b_line1, gradcam_b_line2),
-#         (gradcam_diff_line1, gradcam_diff_line2),
-#         (finercam_line1, finercam_line2),
-#         (rollout_line1, rollout_line2),
-#         (chefer_line1, chefer_line2),
-#     ]
-
-#     h, w, _ = tiles[0].shape
-#     for tile in tiles:
-#         if tile.shape != (h, w, 3):
-#             raise ValueError("All panel tiles must have the same shape.")
-
-#     scaled_w = max(1, int(round(w * scale)))
-#     scaled_h = max(1, int(round(h * scale)))
-
-#     gap = 16
-#     subtitle_h = 72
-#     panel_w = len(tiles) * scaled_w + (len(tiles) - 1) * gap
-#     panel_h = scaled_h + subtitle_h
-
-#     canvas = Image.new("RGB", (panel_w, panel_h), color=(255, 255, 255))
-#     draw = ImageDraw.Draw(canvas)
-#     line1_font = _load_font(20, bold=True)
-#     line2_font = _load_font(18, bold=True)
-
-#     x = 0
-#     for tile, (line1, line2) in zip(tiles, subtitle_pairs):
-#         tile_img = Image.fromarray(tile).resize((scaled_w, scaled_h), resample=Image.Resampling.BICUBIC)
-#         canvas.paste(tile_img, (x, 0))
-
-#         line1_box = (x, scaled_h + 4, x + scaled_w, scaled_h + 34)
-#         line2_box = (x, scaled_h + 34, x + scaled_w, scaled_h + subtitle_h)
-#         _draw_centered_text(draw, line1_box, line1, font=line1_font)
-#         _draw_centered_text(draw, line2_box, line2, font=line2_font)
-#         x += scaled_w + gap
-
-#     return np.array(canvas)
-
-# def make_panel_with_subtitles(
-#     first_tile_line1: str,
-#     first_tile_line2: str,
-#     rgb_float: np.ndarray,
-#     gradcam_overlay_a: np.ndarray,
-#     gradcam_overlay_b: np.ndarray,
-#     gradcam_diff_overlay: np.ndarray,
-#     finercam_overlay: np.ndarray,
-#     rollout_overlay: np.ndarray,
-#     chefer_overlay_a: np.ndarray,
-#     chefer_overlay_b: np.ndarray,
-#     chefer_diff_overlay: np.ndarray,
-#     gradcam_a_line1: str,
-#     gradcam_a_line2: str,
-#     gradcam_b_line1: str,
-#     gradcam_b_line2: str,
-#     gradcam_diff_line1: str,
-#     gradcam_diff_line2: str,
-#     finercam_line1: str,
-#     finercam_line2: str,
-#     rollout_line1: str,
-#     rollout_line2: str,
-#     chefer_a_line1: str,
-#     chefer_a_line2: str,
-#     chefer_b_line1: str,
-#     chefer_b_line2: str,
-#     chefer_diff_line1: str,
-#     chefer_diff_line2: str,
-#     scale: float = 1.35,
-# ) -> np.ndarray:
-#     rgb_uint8 = _to_uint8_rgb(rgb_float)
-#     gradcam_a_uint8 = _to_uint8_rgb(gradcam_overlay_a)
-#     gradcam_b_uint8 = _to_uint8_rgb(gradcam_overlay_b)
-#     gradcam_diff_uint8 = _to_uint8_rgb(gradcam_diff_overlay)
-#     finercam_uint8 = _to_uint8_rgb(finercam_overlay)
-#     rollout_uint8 = _to_uint8_rgb(rollout_overlay)
-#     chefer_a_uint8 = _to_uint8_rgb(chefer_overlay_a)
-#     chefer_b_uint8 = _to_uint8_rgb(chefer_overlay_b)
-#     chefer_diff_uint8 = _to_uint8_rgb(chefer_diff_overlay)
-
-#     row1_tiles = [
-#         rgb_uint8,
-#         gradcam_a_uint8,
-#         gradcam_b_uint8,
-#         gradcam_diff_uint8,
-#         finercam_uint8,
-#     ]
-#     row1_pairs = [
-#         (first_tile_line1, first_tile_line2),
-#         (gradcam_a_line1, gradcam_a_line2),
-#         (gradcam_b_line1, gradcam_b_line2),
-#         (gradcam_diff_line1, gradcam_diff_line2),
-#         (finercam_line1, finercam_line2),
-#     ]
-
-#     row2_tiles = [
-#         rollout_uint8,
-#         chefer_a_uint8,
-#         chefer_b_uint8,
-#         chefer_diff_uint8,
-#     ]
-#     row2_pairs = [
-#         (rollout_line1, rollout_line2),
-#         (chefer_a_line1, chefer_a_line2),
-#         (chefer_b_line1, chefer_b_line2),
-#         (chefer_diff_line1, chefer_diff_line2),
-#     ]
-
-#     h, w, _ = row1_tiles[0].shape
-#     for tile in row1_tiles + row2_tiles:
-#         if tile.shape != (h, w, 3):
-#             raise ValueError("All panel tiles must have the same shape.")
-
-#     scaled_w = max(1, int(round(w * scale)))
-#     scaled_h = max(1, int(round(h * scale)))
-
-#     gap_x = 16
-#     gap_y = 24
-#     subtitle_h = 72
-#     row1_w = len(row1_tiles) * scaled_w + (len(row1_tiles) - 1) * gap_x
-#     row2_w = len(row2_tiles) * scaled_w + (len(row2_tiles) - 1) * gap_x
-#     panel_w = max(row1_w, row2_w)
-#     row_h = scaled_h + subtitle_h
-#     panel_h = row_h * 2 + gap_y
-
-#     canvas = Image.new("RGB", (panel_w, panel_h), color=(255, 255, 255))
-#     draw = ImageDraw.Draw(canvas)
-#     line1_font = _load_font(20, bold=True)
-#     line2_font = _load_font(18, bold=True)
-
-#     def paste_row(tiles, subtitle_pairs, y_offset: int) -> None:
-#         row_w = len(tiles) * scaled_w + (len(tiles) - 1) * gap_x
-#         x = (panel_w - row_w) // 2
-#         for tile, (line1, line2) in zip(tiles, subtitle_pairs):
-#             tile_img = Image.fromarray(tile).resize((scaled_w, scaled_h), resample=Image.Resampling.BICUBIC)
-#             canvas.paste(tile_img, (x, y_offset))
-
-#             line1_box = (x, y_offset + scaled_h + 4, x + scaled_w, y_offset + scaled_h + 34)
-#             line2_box = (x, y_offset + scaled_h + 34, x + scaled_w, y_offset + scaled_h + subtitle_h)
-#             _draw_centered_text(draw, line1_box, line1, font=line1_font)
-#             _draw_centered_text(draw, line2_box, line2, font=line2_font)
-#             x += scaled_w + gap_x
-
-#     paste_row(row1_tiles, row1_pairs, 0)
-#     paste_row(row2_tiles, row2_pairs, row_h + gap_y)
-
-#     return np.array(canvas)
-
 def make_panel_with_subtitles(
     first_tile_line1: str,
     first_tile_line2: str,
@@ -265,6 +74,7 @@ def make_panel_with_subtitles(
     relprop_chefer_diff_overlay: Optional[np.ndarray] = None,
     gradcam_a_line1: str = "GradCAM",
     gradcam_a_line2: str = "",
+    gradcam_a_line2_color=None,
     gradcam_b_line1: str = "GradCAM",
     gradcam_b_line2: str = "",
     gradcam_diff_line1: str = "Map Diff",
@@ -275,6 +85,7 @@ def make_panel_with_subtitles(
     gate_weighted_finercam_line2: str = "FinerCAM × gate",
     gate_weighted_gradcam_a_line1: str = "GradCAM × gate",
     gate_weighted_gradcam_a_line2: str = "",
+    gate_weighted_gradcam_a_line2_color=None,
     gate_weighted_gradcam_b_line1: str = "GradCAM × gate",
     gate_weighted_gradcam_b_line2: str = "",
     gate_weighted_map_diff_line1: str = "Map Diff × gate",
@@ -379,33 +190,37 @@ def make_panel_with_subtitles(
     #     row1_pairs.append((gate_weighted_finercam_line1, gate_weighted_finercam_line2))
 
     tile_lookup = {
-        "rgb": (rgb_uint8, first_tile_line1, first_tile_line2),
-        "rgb_gt_mask": (gt_mask_uint8, first_tile_line1, first_tile_line2),
-        "gt_mask": (gt_mask_binary_uint8, "GT mask", "binary mask"),
-        "seg_gate": (seg_gate_uint8, seg_gate_line1, seg_gate_line2),
-        "gradcam_a": (gradcam_a_uint8, gradcam_a_line1, gradcam_a_line2),
-        "gradcam_b": (gradcam_b_uint8, gradcam_b_line1, gradcam_b_line2),
-        "map_diff": (gradcam_diff_uint8, gradcam_diff_line1, gradcam_diff_line2),
-        "finercam": (finercam_uint8, finercam_line1, finercam_line2),
+        "rgb": (rgb_uint8, first_tile_line1, first_tile_line2, None),
+        "rgb_gt_mask": (gt_mask_uint8, first_tile_line1, first_tile_line2, None),
+        "gt_mask": (gt_mask_binary_uint8, "GT mask", "binary mask", None),
+        "seg_gate": (seg_gate_uint8, seg_gate_line1, seg_gate_line2, None),
+        "gradcam_a": (gradcam_a_uint8, gradcam_a_line1, gradcam_a_line2, gradcam_a_line2_color),
+        "gradcam_b": (gradcam_b_uint8, gradcam_b_line1, gradcam_b_line2, None),
+        "map_diff": (gradcam_diff_uint8, gradcam_diff_line1, gradcam_diff_line2, None),
+        "finercam": (finercam_uint8, finercam_line1, finercam_line2, None),
         "gate_weighted_gradcam_a": (
             gate_weighted_gradcam_a_uint8,
             gate_weighted_gradcam_a_line1,
             gate_weighted_gradcam_a_line2,
+            gate_weighted_gradcam_a_line2_color,
         ),
         "gate_weighted_gradcam_b": (
             gate_weighted_gradcam_b_uint8,
             gate_weighted_gradcam_b_line1,
             gate_weighted_gradcam_b_line2,
+            None,
         ),
         "gate_weighted_map_diff": (
             gate_weighted_map_diff_uint8,
             gate_weighted_map_diff_line1,
             gate_weighted_map_diff_line2,
+            None,
         ),
         "gate_weighted_finercam": (
             gate_weighted_finercam_uint8,
             gate_weighted_finercam_line1,
             gate_weighted_finercam_line2,
+            None,
         ),
     }
 
@@ -413,7 +228,7 @@ def make_panel_with_subtitles(
     row1_pairs = []
 
     for item in panel_items:
-        tile, line1, line2 = tile_lookup[item]
+        tile, line1, line2, line2_color = tile_lookup[item]
 
         if tile is None:
             raise ValueError(
@@ -422,7 +237,7 @@ def make_panel_with_subtitles(
             )
 
         row1_tiles.append(tile)
-        row1_pairs.append((line1, line2))
+        row1_pairs.append((line1, line2, line2_color))
 
     rows_tiles = [row1_tiles]
     rows_pairs = [row1_pairs]
@@ -435,10 +250,10 @@ def make_panel_with_subtitles(
             chefer_diff_uint8,
         ]
         row2_pairs = [
-            (rollout_line1, rollout_line2),
-            (chefer_a_line1, chefer_a_line2),
-            (chefer_b_line1, chefer_b_line2),
-            (chefer_diff_line1, chefer_diff_line2),
+            (rollout_line1, rollout_line2, None),
+            (chefer_a_line1, chefer_a_line2, None),
+            (chefer_b_line1, chefer_b_line2, None),
+            (chefer_diff_line1, chefer_diff_line2, None),
         ]
 
         rows_tiles.append(row2_tiles)
@@ -464,9 +279,9 @@ def make_panel_with_subtitles(
             relprop_chefer_diff_uint8,
         ]
         row3_pairs = [
-            (relprop_chefer_a_line1, relprop_chefer_a_line2),
-            (relprop_chefer_b_line1, relprop_chefer_b_line2),
-            (relprop_chefer_diff_line1, relprop_chefer_diff_line2),
+            (relprop_chefer_a_line1, relprop_chefer_a_line2, None),
+            (relprop_chefer_b_line1, relprop_chefer_b_line2, None),
+            (relprop_chefer_diff_line1, relprop_chefer_diff_line2, None),
         ]
         rows_tiles.append(row3_tiles)
         rows_pairs.append(row3_pairs)
@@ -482,10 +297,11 @@ def make_panel_with_subtitles(
 
     gap_x = 16
     gap_y = 24
-    subtitle_h = 72
+    top_title_h = 34
+    bottom_title_h = 42
     row_widths = [len(row) * scaled_w + (len(row) - 1) * gap_x for row in rows_tiles]
     panel_w = max(row_widths)
-    row_h = scaled_h + subtitle_h
+    row_h = top_title_h + scaled_h + bottom_title_h
     panel_h = row_h * len(rows_tiles) + gap_y * (len(rows_tiles) - 1)
 
     canvas = Image.new("RGB", (panel_w, panel_h), color=(255, 255, 255))
@@ -496,14 +312,27 @@ def make_panel_with_subtitles(
     def paste_row(tiles, subtitle_pairs, y_offset: int) -> None:
         row_w = len(tiles) * scaled_w + (len(tiles) - 1) * gap_x
         x = (panel_w - row_w) // 2
-        for tile, (line1, line2) in zip(tiles, subtitle_pairs):
-            tile_img = Image.fromarray(tile).resize((scaled_w, scaled_h), resample=Image.Resampling.BICUBIC)
-            canvas.paste(tile_img, (x, y_offset))
+        for tile, subtitle in zip(tiles, subtitle_pairs):
+            if len(subtitle) == 2:
+                line1, line2 = subtitle
+                line2_color = None
+            else:
+                line1, line2, line2_color = subtitle
 
-            line1_box = (x, y_offset + scaled_h + 4, x + scaled_w, y_offset + scaled_h + 34)
-            line2_box = (x, y_offset + scaled_h + 34, x + scaled_w, y_offset + scaled_h + subtitle_h)
-            _draw_centered_text(draw, line1_box, line1, font=line1_font)
-            _draw_centered_text(draw, line2_box, line2, font=line2_font)
+            tile_y = y_offset + top_title_h
+            tile_img = Image.fromarray(tile).resize((scaled_w, scaled_h), resample=Image.Resampling.BICUBIC)
+            canvas.paste(tile_img, (x, tile_y))
+
+            top_box = (x, y_offset, x + scaled_w, y_offset + top_title_h)
+            bottom_box = (x, tile_y + scaled_h + 2, x + scaled_w, tile_y + scaled_h + bottom_title_h)
+            _draw_centered_text(draw, top_box, line1, font=line1_font)
+            _draw_centered_text(
+                draw,
+                bottom_box,
+                line2,
+                font=line2_font,
+                fill=line2_color if line2_color is not None else (0, 0, 0),
+            )
             x += scaled_w + gap_x
 
     for row_idx, (tiles, subtitle_pairs) in enumerate(zip(rows_tiles, rows_pairs)):
