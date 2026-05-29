@@ -43,6 +43,7 @@ conda activate thesis
 #
 # Current default if you simply run:
 #   sbatch run_panderm_full_finetune_ha.sh
+POOLING=${POOLING:-cls}
 HA_LAMBDA=${HA_LAMBDA:-0.5}
 HA_START_EPOCH=${HA_START_EPOCH:-0}
 DAL_LAMBDA=${DAL_LAMBDA:-0.0}
@@ -55,6 +56,14 @@ CUTMIX=${CUTMIX:-0.0}
 SMOOTHING=${SMOOTHING:-0.0}
 
 HA_LOSS_TYPE=${HA_LOSS_TYPE:-paper_dice}
+if [[ "$POOLING" == "cls" ]]; then
+  POOLING_TAG="cls"
+elif [[ "$POOLING" == "mean" ]]; then
+  POOLING_TAG="gap"
+else
+  echo "Unsupported POOLING=$POOLING. Use POOLING=cls or POOLING=mean."
+  exit 1
+fi
 
 CSV_PATH=${CSV_PATH:-../data/HAM10000/ham_segmentation_overlap.csv}
 ROOT_PATH=${ROOT_PATH:-../data/HAM10000}
@@ -67,12 +76,12 @@ WANDB_PROJECT=${WANDB_PROJECT:-master-thesis-panderm-ha}
 
 if [[ "$HA_LAMBDA" == "0.0" || "$HA_LAMBDA" == "0" ]]; then
   if [[ "$DAL_LAMBDA" == "0.0" || "$DAL_LAMBDA" == "0" ]]; then
-    LOSS_TAG="${EXPERIMENT_TAG}_ce_classes${NB_CLASSES}_ep${EPOCHS}_lr${LR}"
+    LOSS_TAG="${EXPERIMENT_TAG}_${POOLING_TAG}_ce_classes${NB_CLASSES}_ep${EPOCHS}_lr${LR}"
   else
-    LOSS_TAG="${EXPERIMENT_TAG}_dal${DAL_LAMBDA}_start${HA_START_EPOCH}_classes${NB_CLASSES}_ep${EPOCHS}_lr${LR}"
+    LOSS_TAG="${EXPERIMENT_TAG}_${POOLING_TAG}_dal${DAL_LAMBDA}_start${HA_START_EPOCH}_classes${NB_CLASSES}_ep${EPOCHS}_lr${LR}"
   fi
 else
-  LOSS_TAG="${EXPERIMENT_TAG}_ha${HA_LAMBDA}_start${HA_START_EPOCH}_${HA_LOSS_TYPE}_dal${DAL_LAMBDA}_classes${NB_CLASSES}_ep${EPOCHS}_lr${LR}"
+  LOSS_TAG="${EXPERIMENT_TAG}_${POOLING_TAG}_ha${HA_LAMBDA}_start${HA_START_EPOCH}_${HA_LOSS_TYPE}_dal${DAL_LAMBDA}_classes${NB_CLASSES}_ep${EPOCHS}_lr${LR}"
 fi
 
 WANDB_NAME=${WANDB_NAME:-${LOSS_TAG}}
@@ -102,6 +111,7 @@ python -m run_panderm_full_finetune_ha \
   --update-freq 1 \
   --weights \
   --monitor recall \
+  --pooling "$POOLING" \
   --device cuda \
   --num-workers 4 \
   --mixup "$MIXUP" \

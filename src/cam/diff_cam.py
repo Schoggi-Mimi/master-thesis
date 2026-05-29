@@ -12,6 +12,19 @@ from pytorch_grad_cam.utils.model_targets import (ClassifierOutputTarget,
                                                   FinerWeightedTarget)
 
 
+# Higher image_weight means the original image remains more visible
+# and the heatmap becomes less dominant.
+CLINICIAN_OVERLAY_IMAGE_WEIGHT = 0.65
+
+
+def show_cam_on_image_clinician(rgb_float: np.ndarray, cam_map: np.ndarray) -> np.ndarray:
+    return show_cam_on_image(
+        rgb_float,
+        cam_map,
+        use_rgb=True,
+        image_weight=CLINICIAN_OVERLAY_IMAGE_WEIGHT,
+    )
+
 class LogitDiffTarget:
     def __init__(self, a: int, b: int, gamma: float = 0.6):
         self.a = int(a)
@@ -56,15 +69,15 @@ def _run_standard_cam(
     )
 
     cam_A = cam(input_tensor=input_tensor, targets=[ClassifierOutputTarget(A)])[0]
-    vis_A = show_cam_on_image(rgb_float, cam_A, use_rgb=True)
+    vis_A = show_cam_on_image_clinician(rgb_float, cam_A)
 
     cam_B = cam(input_tensor=input_tensor, targets=[ClassifierOutputTarget(B)])[0]
-    vis_B = show_cam_on_image(rgb_float, cam_B, use_rgb=True)
+    vis_B = show_cam_on_image_clinician(rgb_float, cam_B)
 
     cam_diff = np.maximum(cam_A - cam_B, 0.0)
     cam_diff = cam_diff - cam_diff.min()
     cam_diff = cam_diff / (cam_diff.max() + 1e-8)
-    vis_diff = show_cam_on_image(rgb_float, cam_diff, use_rgb=True)
+    vis_diff = show_cam_on_image_clinician(rgb_float, cam_diff)
 
     return cam_A, cam_B, cam_diff, vis_A, vis_B, vis_diff
 
@@ -92,10 +105,10 @@ def _run_finercam(
     )
 
     cam_A = cam_ref(input_tensor=input_tensor, targets=[ClassifierOutputTarget(A)])[0]
-    vis_A = show_cam_on_image(rgb_float, cam_A, use_rgb=True)
+    vis_A = show_cam_on_image_clinician(rgb_float, cam_A)
 
     cam_B = cam_ref(input_tensor=input_tensor, targets=[ClassifierOutputTarget(B)])[0]
-    vis_B = show_cam_on_image(rgb_float, cam_B, use_rgb=True)
+    vis_B = show_cam_on_image_clinician(rgb_float, cam_B)
 
     finer = FinerCAM(
         model=model,
@@ -113,7 +126,7 @@ def _run_finercam(
             alpha=alpha,
         )
         cam_diff = finer(input_tensor=input_tensor, targets=[finer_target])[0]
-        vis_diff = show_cam_on_image(rgb_float, cam_diff, use_rgb=True)
+        vis_diff = show_cam_on_image_clinician(rgb_float, cam_diff)
         return cam_A, cam_B, cam_diff, vis_A, vis_B, vis_diff
     except Exception as e:
         raise RuntimeError(f"FinerCAM failed with FinerWeightedTarget: {e}") from e
@@ -280,7 +293,7 @@ def _compute_chefer_like_heatmap(
     heatmap = cv2.resize(heatmap_small, (rgb_w, rgb_h), interpolation=cv2.INTER_CUBIC)
     heatmap = np.clip(heatmap, 0.0, 1.0)
 
-    overlay = show_cam_on_image(rgb_float, heatmap, use_rgb=True)
+    overlay = show_cam_on_image_clinician(rgb_float, heatmap)
     return heatmap, overlay
 
 def _compute_relprop_chefer_heatmap(
@@ -326,7 +339,7 @@ def _compute_relprop_chefer_heatmap(
     heatmap = cv2.resize(heatmap_small, (rgb_w, rgb_h), interpolation=cv2.INTER_CUBIC)
     heatmap = np.clip(heatmap, 0.0, 1.0)
 
-    overlay = show_cam_on_image(rgb_float, heatmap, use_rgb=True)
+    overlay = show_cam_on_image_clinician(rgb_float, heatmap)
     return heatmap, overlay
 
 
@@ -407,7 +420,7 @@ def _compute_rollout_heatmap(
     heatmap = cv2.resize(heatmap_small, (rgb_w, rgb_h), interpolation=cv2.INTER_CUBIC)
     heatmap = np.clip(heatmap, 0.0, 1.0)
 
-    overlay = show_cam_on_image(rgb_float, heatmap, use_rgb=True)
+    overlay = show_cam_on_image_clinician(rgb_float, heatmap)
     return heatmap, overlay
 
 def compute_cam_bundle(
@@ -494,7 +507,7 @@ def compute_cam_bundle(
         cam_chefer_diff = np.maximum(cam_chefer - cam_chefer_B, 0.0)
         cam_chefer_diff = cam_chefer_diff - cam_chefer_diff.min()
         cam_chefer_diff = cam_chefer_diff / (cam_chefer_diff.max() + 1e-8)
-        vis_chefer_diff = show_cam_on_image(rgb_float, cam_chefer_diff, use_rgb=True)
+        vis_chefer_diff = show_cam_on_image_clinician(rgb_float, cam_chefer_diff)
 
     cam_relprop_chefer = None
     vis_relprop_chefer = None
@@ -521,7 +534,7 @@ def compute_cam_bundle(
         cam_relprop_chefer_diff = np.maximum(cam_relprop_chefer - cam_relprop_chefer_B, 0.0)
         cam_relprop_chefer_diff = cam_relprop_chefer_diff - cam_relprop_chefer_diff.min()
         cam_relprop_chefer_diff = cam_relprop_chefer_diff / (cam_relprop_chefer_diff.max() + 1e-8)
-        vis_relprop_chefer_diff = show_cam_on_image(rgb_float, cam_relprop_chefer_diff, use_rgb=True)
+        vis_relprop_chefer_diff = show_cam_on_image_clinician(rgb_float, cam_relprop_chefer_diff)
 
     return {
         "A": int(A),

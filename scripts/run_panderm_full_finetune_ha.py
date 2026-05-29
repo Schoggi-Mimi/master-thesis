@@ -31,7 +31,13 @@ def parse_args():
     parser.add_argument("--num-workers", type=int, default=8)
     parser.add_argument("--monitor", type=str, default="recall", choices=["acc", "recall"])
     parser.add_argument("--weights", action="store_true")
-
+    parser.add_argument(
+        "--pooling",
+        type=str,
+        default="mean",
+        choices=["mean", "cls"],
+        help="Pooling mode. 'mean' uses GAP/mean pooling; 'cls' uses the CLS token.",
+    )
     parser.add_argument("--image-key", type=str, default="image_rel_path")
     parser.add_argument("--mask-key", type=str, default="mask_rel_path")
     parser.add_argument("--ha-lambda", type=float, default=0.5)
@@ -128,6 +134,7 @@ def main():
         "--num_workers", str(args.num_workers),
         "--monitor", args.monitor,
         "--device", args.device,
+        "--pooling", args.pooling,
         "--image_key", args.image_key,
         "--mask_key", args.mask_key,
         "--mixup", str(args.mixup),
