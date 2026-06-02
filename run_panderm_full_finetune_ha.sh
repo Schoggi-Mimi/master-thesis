@@ -41,9 +41,15 @@ conda activate thesis
 #   Top-k DAL instead of all classes:
 #     HA_LAMBDA=1.0 DAL_LAMBDA=0.1 DAL_MODE=topk_non_target DAL_TOPK=3 sbatch run_panderm_full_finetune_ha.sh
 #
+#
 # Current default if you simply run:
 #   sbatch run_panderm_full_finetune_ha.sh
-POOLING=${POOLING:-cls}
+#
+# For binary MEL/NV fine-tuning, override at submission time, for example:
+#   CSV_PATH=../data/HAM10000/mel_nv/ham_mel_nv_clean.csv \
+#   NB_CLASSES=2 EXPERIMENT_TAG=mel_nv_clean POOLING=mean \
+#   OUTPUT_ROOT=../outputs/mel_nv sbatch run_panderm_full_finetune_ha.sh
+POOLING=${POOLING:-mean}
 HA_LAMBDA=${HA_LAMBDA:-0.5}
 HA_START_EPOCH=${HA_START_EPOCH:-0}
 DAL_LAMBDA=${DAL_LAMBDA:-0.0}
@@ -71,6 +77,7 @@ IMAGE_KEY=${IMAGE_KEY:-image_rel_path}
 MASK_KEY=${MASK_KEY:-mask_rel_path}
 NB_CLASSES=${NB_CLASSES:-7}
 EXPERIMENT_TAG=${EXPERIMENT_TAG:-foundation}
+OUTPUT_ROOT=${OUTPUT_ROOT:-../outputs}
 
 WANDB_PROJECT=${WANDB_PROJECT:-master-thesis-panderm-ha}
 
@@ -98,7 +105,7 @@ python -m run_panderm_full_finetune_ha \
   --image-key "$IMAGE_KEY" \
   --mask-key "$MASK_KEY" \
   --pretrained-checkpoint ../external/weights/panderm_bb_data6_checkpoint-499.pth \
-  --output-dir ../outputs/panderm_${LOSS_TAG} \
+  --output-dir "$OUTPUT_ROOT/panderm_${LOSS_TAG}" \
   --model PanDerm_Base_FT \
   --nb-classes "$NB_CLASSES" \
   --batch-size 64 \

@@ -228,6 +228,13 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional comma-separated class names overriding --class_preset.",
     )
+    parser.add_argument(
+        "--pooling",
+        type=str,
+        default="mean",
+        choices=["mean", "cls"],
+        help="Pooling used by the fine-tuned checkpoint. Use 'mean' for GAP and 'cls' for CLS pooling.",
+    )
     parser.add_argument("--out_dir", type=str, default="outputs/panderm_cam", help="Output folder.")
     parser.add_argument("--image_size", type=int, default=224, help="PanDerm input size. Default: 224.")
     parser.add_argument("--num_samples", type=int, default=10, help="How many images to process.")
@@ -420,7 +427,11 @@ def resolve_gt_label_from_row(row, class_names, class_to_idx, gt_col=None):
     raise ValueError(f"Could not map ground-truth value '{gt}' to {class_names}.")
 
 
-def build_panderm_model(num_classes: int, variant: str = "base") -> torch.nn.Module:
+def build_panderm_model(
+    num_classes: int,
+    variant: str = "base",
+    use_mean_pooling: bool = True,
+) -> torch.nn.Module:
     if variant == "base":
         builder = panderm_base_patch16_224_finetune
     elif variant == "large":
@@ -435,7 +446,7 @@ def build_panderm_model(num_classes: int, variant: str = "base") -> torch.nn.Mod
         drop_path_rate=0.2,
         attn_drop_rate=0.0,
         drop_block_rate=None,
-        use_mean_pooling=True,
+        use_mean_pooling=use_mean_pooling,
         # init_scale=0.001,
         init_scale=1.0,
         # use_rel_pos_bias=True,
@@ -682,6 +693,7 @@ def load_panderm_finetuned_model(
     use_seg_gate: bool = False,
     seg_gate_bg_keep: float = 0.15,
     seg_gate_detach: bool = True,
+    pooling: str = "mean",
 ) -> tuple[torch.nn.Module, dict]:
     checkpoint_path = Path(checkpoint_path)
     if not checkpoint_path.exists():
@@ -689,6 +701,9 @@ def load_panderm_finetuned_model(
 
     if device is None:
         device = get_device(None)
+    if pooling not in {"mean", "cls"}:
+        raise ValueError(f"Unsupported pooling: {pooling}. Expected 'mean' or 'cls'.")
+    use_mean_pooling = pooling == "mean"
 
     ckpt = torch.load(checkpoint_path, map_location="cpu")
     raw_state_dict, checkpoint_format = extract_checkpoint_state_dict(ckpt)
@@ -705,7 +720,11 @@ def load_panderm_finetuned_model(
     if checkpoint_model_type == "panderm":
         state_dict = remap_official_finetune_checkpoint_keys(raw_state_dict)
         variant = infer_panderm_variant_from_state_dict(state_dict)
-        model = build_panderm_model(num_classes=num_classes, variant=variant)
+        model = build_panderm_model(
+            num_classes=num_classes,
+            variant=variant,
+            use_mean_pooling=use_mean_pooling,
+        )
 
         state_dict_model = model.state_dict()
         for k in ["head.weight", "head.bias"]:
@@ -721,7 +740,11 @@ def load_panderm_finetuned_model(
         prepared_state_dict = prepare_multitask_state_dict_for_cam(raw_state_dict)
         variant_probe_state_dict = remap_official_finetune_checkpoint_keys(raw_state_dict)
         variant = infer_panderm_variant_from_state_dict(variant_probe_state_dict)
-        backbone = build_panderm_model(num_classes=num_classes, variant=variant)
+        backbone = build_panderm_model(
+            num_classes=num_classes,
+            variant=variant,
+            use_mean_pooling=use_mean_pooling,
+        )
         model = PanDermMultitaskSegCAMWrapper(
             backbone=backbone,
             use_seg_gate=(checkpoint_model_type == "seggate" or use_seg_gate),
@@ -756,6 +779,8 @@ def load_panderm_finetuned_model(
         "arch": f"PanDerm {variant.capitalize()} FT",
         "variant": variant,
         "num_classes": num_classes,
+        "pooling": pooling,
+        "use_mean_pooling": use_mean_pooling,
         "checkpoint_name": checkpoint_path.name,
         "checkpoint_format": checkpoint_format,
         "checkpoint_model_type": checkpoint_model_type,
@@ -1135,11 +1160,14 @@ def main() -> None:
         use_seg_gate=args.use_seg_gate,
         seg_gate_bg_keep=args.seg_gate_bg_keep,
         seg_gate_detach=args.seg_gate_detach,
+        pooling=args.pooling,
     )
     print(f"[info] Loaded {info['arch']} from {ckpt_path.name}")
     print(
         "[info] checkpoint_model_type=",
         info.get("checkpoint_model_type"),
+        "pooling=",
+        info.get("pooling"),
         "use_seg_gate=",
         info.get("use_seg_gate"),
         "seg_gate_bg_keep=",

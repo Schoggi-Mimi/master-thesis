@@ -28,6 +28,11 @@ def parse_args():
     parser.add_argument("--drop-path", type=float, default=0.2)
     parser.add_argument("--update-freq", type=int, default=1)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--stratified-binary-check",
+        action="store_true",
+        help="Reserved flag for MEL/NV runs. The actual CSV split is expected to be precomputed.",
+    )
     parser.add_argument("--num-workers", type=int, default=8)
     parser.add_argument("--monitor", type=str, default="recall", choices=["acc", "recall"])
     parser.add_argument("--weights", action="store_true")
