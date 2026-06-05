@@ -52,6 +52,7 @@ conda activate thesis
 POOLING=${POOLING:-mean}
 HA_LAMBDA=${HA_LAMBDA:-0.5}
 HA_START_EPOCH=${HA_START_EPOCH:-0}
+HA_FP_WEIGHT=${HA_FP_WEIGHT:-1.0}
 DAL_LAMBDA=${DAL_LAMBDA:-0.0}
 DAL_MODE=${DAL_MODE:-all_classes}
 DAL_TOPK=${DAL_TOPK:-3}
@@ -62,6 +63,7 @@ CUTMIX=${CUTMIX:-0.0}
 SMOOTHING=${SMOOTHING:-0.0}
 
 HA_LOSS_TYPE=${HA_LOSS_TYPE:-paper_dice}
+CHECKPOINT_KEEP_DIR=${CHECKPOINT_KEEP_DIR:-../external/checkpoints4}
 if [[ "$POOLING" == "cls" ]]; then
   POOLING_TAG="cls"
 elif [[ "$POOLING" == "mean" ]]; then
@@ -85,10 +87,14 @@ if [[ "$HA_LAMBDA" == "0.0" || "$HA_LAMBDA" == "0" ]]; then
   if [[ "$DAL_LAMBDA" == "0.0" || "$DAL_LAMBDA" == "0" ]]; then
     LOSS_TAG="${EXPERIMENT_TAG}_${POOLING_TAG}_ce_classes${NB_CLASSES}_ep${EPOCHS}_lr${LR}"
   else
-    LOSS_TAG="${EXPERIMENT_TAG}_${POOLING_TAG}_dal${DAL_LAMBDA}_start${HA_START_EPOCH}_classes${NB_CLASSES}_ep${EPOCHS}_lr${LR}"
+    LOSS_TAG="${EXPERIMENT_TAG}_${POOLING_TAG}_dal${DAL_LAMBDA}_${DAL_MODE}_top${DAL_TOPK}_start${HA_START_EPOCH}_classes${NB_CLASSES}_ep${EPOCHS}_lr${LR}"
   fi
 else
-  LOSS_TAG="${EXPERIMENT_TAG}_${POOLING_TAG}_ha${HA_LAMBDA}_start${HA_START_EPOCH}_${HA_LOSS_TYPE}_dal${DAL_LAMBDA}_classes${NB_CLASSES}_ep${EPOCHS}_lr${LR}"
+  if [[ "$DAL_LAMBDA" == "0.0" || "$DAL_LAMBDA" == "0" ]]; then
+    LOSS_TAG="${EXPERIMENT_TAG}_${POOLING_TAG}_ha${HA_LAMBDA}_start${HA_START_EPOCH}_${HA_LOSS_TYPE}_fp${HA_FP_WEIGHT}_classes${NB_CLASSES}_ep${EPOCHS}_lr${LR}"
+  else
+    LOSS_TAG="${EXPERIMENT_TAG}_${POOLING_TAG}_ha${HA_LAMBDA}_start${HA_START_EPOCH}_${HA_LOSS_TYPE}_fp${HA_FP_WEIGHT}_dal${DAL_LAMBDA}_${DAL_MODE}_top${DAL_TOPK}_classes${NB_CLASSES}_ep${EPOCHS}_lr${LR}"
+  fi
 fi
 
 WANDB_NAME=${WANDB_NAME:-${LOSS_TAG}}
@@ -127,6 +133,7 @@ python -m run_panderm_full_finetune_ha \
   --ha-lambda "$HA_LAMBDA" \
   --ha-start-epoch "$HA_START_EPOCH" \
   --ha-loss-type "$HA_LOSS_TYPE" \
+  --ha-fp-weight "$HA_FP_WEIGHT" \
   --dal-lambda "$DAL_LAMBDA" \
   --dal-mode "$DAL_MODE" \
   --dal-topk "$DAL_TOPK" \
@@ -137,3 +144,13 @@ python -m run_panderm_full_finetune_ha \
   --wandb-mode "$WANDB_MODE" \
   --disable-color-jitter \
   --disable-amp
+
+BEST_CKPT="$OUTPUT_ROOT/panderm_${LOSS_TAG}/checkpoint-best.pth"
+if [[ -f "$BEST_CKPT" ]]; then
+  mkdir -p "$CHECKPOINT_KEEP_DIR"
+  KEEP_CKPT="$CHECKPOINT_KEEP_DIR/checkpoint-best-${LOSS_TAG}.pth"
+  cp "$BEST_CKPT" "$KEEP_CKPT"
+  echo "Copied best checkpoint to: $KEEP_CKPT"
+else
+  echo "WARNING: best checkpoint not found at: $BEST_CKPT"
+fi
