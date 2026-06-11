@@ -253,12 +253,20 @@ def parse_args() -> argparse.Namespace:
         "--compare_mode",
         type=str,
         default="top2",
-        choices=["top2", "fixed", "gt_pair", "pred_topk_non_target", "gt_topk_non_target"],
+        choices=[
+            "top2",
+            "fixed",
+            "gt_pair",
+            "inverse_gt_pair",
+            "pred_topk_non_target",
+            "gt_topk_non_target",
+        ],
         help=(
             "How to choose the main target class A and the comparison classes.\n"
             "top2 = predicted top1/top2 (single comparison class).\n"
             "fixed = user-defined --A/--B used as A/B exactly (single comparison class).\n"
             "gt_pair = use --A/--B as the pair; per image set A=gt_label and B=the other one (single comparison class).\n"
+            "inverse_gt_pair = use --A/--B as the pair; per image set A=the other class and B=gt_label (single comparison class).\n"
             "pred_topk_non_target = A is predicted top1, comparison classes are the top-k non-target predictions.\n"
             "gt_topk_non_target = A is gt_label, comparison classes are the top-k non-target predictions."
         ),
@@ -1379,6 +1387,33 @@ def main() -> None:
                 B_idx = class_to_idx[args.A]
             comparison_categories = [B_idx]
 
+        elif args.compare_mode == "inverse_gt_pair":
+            if args.A is None or args.B is None:
+                raise ValueError("--compare_mode inverse_gt_pair requires --A and --B, e.g. --A MEL --B NV.")
+
+            gt_name = resolve_gt_label_from_row(
+                row=row,
+                class_names=class_names,
+                class_to_idx=class_to_idx,
+                gt_col=args.gt_col,
+            )
+
+            pair_names = [args.A, args.B]
+            pair_lookup = {name.upper(): name for name in pair_names}
+            gt_key = gt_name.upper()
+
+            if gt_key not in pair_lookup:
+                raise ValueError(
+                    f"Ground-truth label '{gt_name}' is not one of the inverse_gt_pair classes: {pair_names}."
+                )
+
+            gt_pair_name = pair_lookup[gt_key]
+            other_pair_name = pair_names[1] if gt_pair_name == pair_names[0] else pair_names[0]
+
+            A_idx = class_to_idx[other_pair_name]
+            B_idx = class_to_idx[gt_pair_name]
+            comparison_categories = [B_idx]
+
         elif args.compare_mode == "pred_topk_non_target":
             A_idx = int(sorted_idx[0])
             comparison_categories = [int(i) for i in sorted_idx if int(i) != A_idx][: max(1, args.topk_compare)]
@@ -1400,6 +1435,19 @@ def main() -> None:
                 print(f"[skip] {image_id}: could not find non-target comparison categories")
                 continue
             B_idx = comparison_categories[0]
+
+        if A_idx is None or B_idx is None:
+            raise RuntimeError(
+                f"A_idx/B_idx were not set for compare_mode={args.compare_mode}. "
+                "This would make compute_cam_bundle fall back to top2 prediction mode."
+            )
+
+        print(
+            f"[debug compare_mode] {args.compare_mode} | "
+            f"A_idx={A_idx} ({idx_to_class[A_idx]}) | "
+            f"B_idx={B_idx} ({idx_to_class[B_idx]}) | "
+            f"comparison={comparison_categories}"
+        )
 
         res = compute_cam_bundle(
             model=model,

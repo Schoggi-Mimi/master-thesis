@@ -64,7 +64,7 @@ def parse_args():
     parser.add_argument("--init-checkpoint", type=str, default="")
 
     parser.add_argument("--wandb-name", type=str, default="panderm_full_finetune_ham_ha")
-    parser.add_argument("--wandb-project", type=str, default=os.environ.get("WANDB_PROJECT", "master-thesis-panderm-ha"))
+    parser.add_argument("--wandb-project", type=str, default=os.environ.get("WANDB_PROJECT", "master-thesis-mel-nv"))
     parser.add_argument("--wandb-entity", type=str, default=os.environ.get("WANDB_ENTITY", ""))
     parser.add_argument("--wandb-mode", type=str, default=os.environ.get("WANDB_MODE", "online"))
     parser.add_argument("--device", type=str, default="cuda")

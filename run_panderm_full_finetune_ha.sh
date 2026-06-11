@@ -81,7 +81,7 @@ NB_CLASSES=${NB_CLASSES:-7}
 EXPERIMENT_TAG=${EXPERIMENT_TAG:-foundation}
 OUTPUT_ROOT=${OUTPUT_ROOT:-../outputs}
 
-WANDB_PROJECT=${WANDB_PROJECT:-master-thesis-panderm-ha}
+WANDB_PROJECT=${WANDB_PROJECT:-master-thesis-mel-nv}
 
 if [[ "$HA_LAMBDA" == "0.0" || "$HA_LAMBDA" == "0" ]]; then
   if [[ "$DAL_LAMBDA" == "0.0" || "$DAL_LAMBDA" == "0" ]]; then
