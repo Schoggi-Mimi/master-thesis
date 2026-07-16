@@ -41,7 +41,6 @@ conda activate thesis
 #   Top-k DAL instead of all classes:
 #     HA_LAMBDA=1.0 DAL_LAMBDA=0.1 DAL_MODE=topk_non_target DAL_TOPK=3 sbatch run_panderm_full_finetune_ha.sh
 #
-#
 # Current default if you simply run:
 #   sbatch run_panderm_full_finetune_ha.sh
 #
@@ -49,6 +48,10 @@ conda activate thesis
 #   CSV_PATH=../data/HAM10000/mel_nv/ham_mel_nv_clean.csv \
 #   NB_CLASSES=2 EXPERIMENT_TAG=mel_nv_clean POOLING=mean \
 #   OUTPUT_ROOT=../outputs/mel_nv sbatch run_panderm_full_finetune_ha.sh
+#
+# PATCH 8: BATCH_SIZE is now controllable from the environment.
+# Example pilot run: BATCH_SIZE=8 EPOCHS=1 sbatch run_panderm_full_finetune_ha.sh
+BATCH_SIZE=${BATCH_SIZE:-64}
 POOLING=${POOLING:-mean}
 HA_LAMBDA=${HA_LAMBDA:-0.5}
 HA_START_EPOCH=${HA_START_EPOCH:-0}
@@ -114,7 +117,7 @@ python -m run_panderm_full_finetune_ha \
   --output-dir "$OUTPUT_ROOT/panderm_${LOSS_TAG}" \
   --model PanDerm_Base_FT \
   --nb-classes "$NB_CLASSES" \
-  --batch-size 64 \
+  --batch-size "$BATCH_SIZE" \
   --epochs "$EPOCHS" \
   --lr "$LR" \
   --weight-decay 0.05 \
