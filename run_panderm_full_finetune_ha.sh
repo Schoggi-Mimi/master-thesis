@@ -2,7 +2,7 @@
 #SBATCH --job-name=panderm_ha
 #SBATCH --output=logs/panderm_ha_%j.out
 #SBATCH --error=logs/panderm_ha_%j.err
-#SBATCH --time=12:00:00
+#SBATCH --time=6:00:00
 #SBATCH --mail-user=choekyel.nyungmartsang@students.unibe.ch
 #SBATCH --mail-type=END,FAIL
 #SBATCH --nodes=1
