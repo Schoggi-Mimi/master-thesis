@@ -1,0 +1,775 @@
+#!/usr/bin/env python
+# coding: utf-8
+
+
+# ── CELL 1]:
+
+
+# =============================================================================
+# Notebook 08b — Clinician Model Choice PDFs (revised)
+#
+# Changes from 08a:
+#   1. CLS NV uses block -12; all other combinations use block -1
+#   2. FP MEL subset added alongside FN MEL, typical MEL, typical NV
+#   3. PDF filenames reflect actual block used and case type
+#   4. Annotation export notebook cell at the bottom (folder copy + CSV)
+#   5. Panel items: rgb_gt_mask, gradcam_a, gradcam_b, map_diff, finercam
+# =============================================================================
+
+# =============================================================================
+# CELL 1 — Imports and repo root
+# =============================================================================
+
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import pandas as pd
+import numpy as np
+from PIL import Image, ImageDraw, ImageFont
+
+print("Python:", sys.executable)
+
+def find_repo_root() -> Path:
+    candidates = [
+        Path.cwd(),
+        Path.cwd().parent,
+        Path.cwd().parent.parent,
+        Path("/storage/homefs/cn21m021/projects/master-thesis"),
+        Path("/Users/choekyelnyungmartsang/Developer/master-thesis"),
+    ]
+    for p in candidates:
+        if (p / "scripts" / "generate_finer_cam_panderm.py").exists():
+            return p.resolve()
+    raise FileNotFoundError("Could not find repo root.")
+
+REPO_ROOT = find_repo_root()
+print("REPO_ROOT:", REPO_ROOT)
+
+
+
+# ── CELL 2]:
+
+
+# =============================================================================
+# CELL 2 — Paths
+# =============================================================================
+
+HAM_ROOT        = REPO_ROOT / "data" / "HAM10000"
+MEL_NV_ROOT     = HAM_ROOT / "mel_nv"
+CLEAN_CSV       = MEL_NV_ROOT / "ham_mel_nv_clean.csv"
+CANDIDATE_CSV   = (
+    REPO_ROOT / "outputs" / "mel_nv"
+    / "feature_space_difficult_cases_last_block"
+    / "clinician_curation_candidates"
+    / "clinician_curation_candidates_combined_cls_gap.csv"
+)
+
+OUT_ROOT        = REPO_ROOT / "outputs" / "mel_nv" / "clinician_model_choice_08b"
+CSV_OUT_DIR     = OUT_ROOT / "csv"
+PANEL_OUT_DIR   = OUT_ROOT / "panels"
+PDF_OUT_DIR     = OUT_ROOT / "pdf"
+EXPORT_DIR      = OUT_ROOT / "export_for_florentia"   # flat image folder for annotation
+
+for d in [CSV_OUT_DIR, PANEL_OUT_DIR, PDF_OUT_DIR, EXPORT_DIR]:
+    d.mkdir(parents=True, exist_ok=True)
+
+CLS_CKPT = REPO_ROOT / "external" / "checkpoints5" / "checkpoint-best-cls-ha5.pth"
+GAP_CKPT = REPO_ROOT / "external" / "checkpoints5" / "checkpoint-best-gap-ha5.pth"
+
+print("CLEAN_CSV exists:", CLEAN_CSV.exists())
+print("CANDIDATE_CSV exists:", CANDIDATE_CSV.exists())
+print("CLS_CKPT exists:", CLS_CKPT.exists())
+print("GAP_CKPT exists:", GAP_CKPT.exists())
+
+
+
+# ── CELL 3]:
+
+
+# =============================================================================
+# CELL 3 — Global config
+# =============================================================================
+
+# ----- Block selection rules -------------------------------------------------
+# Key finding from notebook 02:
+#   CLS + NV  -> block -12  (best per-class spatial alignment for NV in CLS)
+#   all others -> block -1
+
+BLOCK_DEFAULT   = -1
+BLOCK_CLS_NV    = -12     # CLS model, NV images only
+
+# ----- CAM settings ----------------------------------------------------------
+CAM_METHOD      = "finercam"
+CLASS_NAMES     = "MEL,NV"
+A_CLASS         = "MEL"
+B_CLASS         = "NV"
+PANEL_ITEMS     = "rgb_gt_mask,gradcam_a,gradcam_b,map_diff,finercam"
+# Note: no spaces — passed directly as CLI arg
+
+# ----- Sample sizes ----------------------------------------------------------
+N_MEL           = 10
+N_NV            = 10
+
+# ----- Set True to print commands without running ----------------------------
+DRY_RUN         = False
+
+SCENARIOS = {
+    "CLS": {"checkpoint": CLS_CKPT, "pooling": "cls",  "display": "CLS model"},
+    "GAP": {"checkpoint": GAP_CKPT, "pooling": "mean", "display": "GAP model"},
+}
+
+
+
+# ── CELL 4]:
+
+
+# =============================================================================
+# CELL 4 — CSV helpers
+# =============================================================================
+
+def standardize_label(x):
+    if pd.isna(x):
+        return x
+    s = str(x).strip().upper()
+    if s in {"MEL", "MELANOMA"}:
+        return "MEL"
+    if s in {"NV", "NEVUS", "NEVI"}:
+        return "NV"
+    return s
+
+def ensure_required_columns(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    if "image_id" not in df.columns:
+        if "isic_id" in df.columns:
+            df["image_id"] = df["isic_id"].astype(str)
+        elif "image_rel_path" in df.columns:
+            df["image_id"] = df["image_rel_path"].astype(str).map(lambda p: Path(p).stem)
+        elif "image" in df.columns:
+            df["image_id"] = df["image"].astype(str).map(lambda p: Path(p).stem)
+        else:
+            raise ValueError("Could not infer image_id.")
+    if "image_rel_path" not in df.columns:
+        if "image" in df.columns:
+            df["image_rel_path"] = df["image"].astype(str)
+        else:
+            df["image_rel_path"] = df["image_id"].astype(str) + ".jpg"
+    if "gt_label" not in df.columns:
+        if "dx" in df.columns:
+            df["gt_label"] = df["dx"].map(standardize_label)
+        elif "label_name" in df.columns:
+            df["gt_label"] = df["label_name"].map(standardize_label)
+        else:
+            raise ValueError("Could not infer gt_label.")
+    df["gt_label"] = df["gt_label"].map(standardize_label)
+    if "mask_rel_path" not in df.columns:
+        df["mask_rel_path"] = df["image_id"].astype(str).map(
+            lambda x: f"masks/{x}_segmentation.png"
+        )
+    return df
+
+KEEP_COLS = ["image_id", "image_rel_path", "mask_rel_path", "gt_label", "selection_reason"]
+
+
+
+# ── CELL 12]:
+
+
+# =============================================================================
+# CELL 5 — Load and select images
+# =============================================================================
+
+clean_df = ensure_required_columns(pd.read_csv(CLEAN_CSV))
+print("clean_df:", clean_df.shape)
+print(clean_df["gt_label"].value_counts(dropna=False))
+
+cand_df = ensure_required_columns(pd.read_csv(CANDIDATE_CSV))
+
+# Verify group names in the actual CSV
+print("\nActual curation_group values:")
+print(cand_df["curation_group"].value_counts())
+
+clean_base = (
+    clean_df[["image_id", "image_rel_path", "mask_rel_path", "gt_label"]]
+    .drop_duplicates("image_id")
+)
+
+def attach_clean_paths(df: pd.DataFrame) -> pd.DataFrame:
+    """Merge image_rel_path, mask_rel_path, gt_label from clean_df."""
+    df = df.drop(
+        columns=[c for c in ["image_rel_path", "mask_rel_path", "gt_label"] if c in df.columns],
+        errors="ignore",
+    )
+    return df.merge(clean_base, on="image_id", how="left")
+
+
+# Run this to decide whether to split by model or use shared sets
+overlap_report = []
+
+for group in ["nearest_mel_centroid", "nearest_nv_centroid",
+              "fp_mel_confident", "fn_mel", "difficult_correct_mel"]:
+    subset = cand_df[cand_df["curation_group"] == group]
+    by_model = subset.groupby("model_short")["image_id"].apply(set).to_dict()
+    model_keys = list(by_model.keys())
+
+    if len(model_keys) == 2:
+        set_a = by_model[model_keys[0]]
+        set_b = by_model[model_keys[1]]
+        shared = set_a & set_b
+        only_a = set_a - set_b
+        only_b = set_b - set_a
+        overlap_pct = len(shared) / max(len(set_a | set_b), 1) * 100
+        overlap_report.append({
+            "group":        group,
+            "model_a":      model_keys[0],
+            "model_b":      model_keys[1],
+            "n_model_a":    len(set_a),
+            "n_model_b":    len(set_b),
+            "n_shared":     len(shared),
+            "n_only_a":     len(only_a),
+            "n_only_b":     len(only_b),
+            "overlap_pct":  round(overlap_pct, 1),
+        })
+    else:
+        overlap_report.append({
+            "group": group,
+            "note":  f"Only one model present: {model_keys}",
+        })
+
+overlap_df = pd.DataFrame(overlap_report)
+print("\nOverlap report:")
+display(overlap_df)
+
+# --- Typical MEL (nearest MEL centroid, n=10) ---------------------------------
+mel_df = (
+    cand_df[cand_df["curation_group"] == "nearest_mel_centroid"]
+    .drop_duplicates("image_id")
+    .head(N_MEL)
+    .copy()
+)
+if len(mel_df) == 0:
+    mel_df = (
+        clean_df[clean_df["gt_label"] == "MEL"]
+        .drop_duplicates("image_id")
+        .head(N_MEL)
+        .copy()
+    )
+    mel_df["selection_reason"] = "fallback_first_mel"
+else:
+    mel_df = attach_clean_paths(mel_df)
+    mel_df["selection_reason"] = "nearest_mel_centroid"
+mel_df = mel_df[KEEP_COLS].reset_index(drop=True)
+
+# --- Typical NV (nearest NV centroid, n=10) -----------------------------------
+nv_df = (
+    cand_df[cand_df["curation_group"] == "nearest_nv_centroid"]
+    .drop_duplicates("image_id")
+    .head(N_NV)
+    .copy()
+)
+if len(nv_df) == 0:
+    nv_df = (
+        clean_df[clean_df["gt_label"] == "NV"]
+        .drop_duplicates("image_id")
+        .head(N_NV)
+        .copy()
+    )
+    nv_df["selection_reason"] = "fallback_first_nv"
+else:
+    nv_df = attach_clean_paths(nv_df)
+    nv_df["selection_reason"] = "nearest_nv_centroid"
+nv_df = nv_df[KEEP_COLS].reset_index(drop=True)
+
+# --- FN MEL (missed melanoma) -------------------------------------------------
+# Deduplicate on image_id across both models — gives all unique missed MEL images
+fn_mel_df = (
+    cand_df[cand_df["curation_group"] == "fn_mel"]
+    .drop_duplicates("image_id")   # keeps first occurrence, model does not matter
+    .copy()
+)
+fn_mel_df = attach_clean_paths(fn_mel_df)
+fn_mel_df["selection_reason"] = "fn_mel"
+fn_mel_df = fn_mel_df[KEEP_COLS].reset_index(drop=True)
+print(f"\nFN MEL unique images: {len(fn_mel_df)}")
+
+# --- FP MEL (NV confidently misclassified as MEL) ----------------------------
+# Correct group name is fp_mel_confident, not fp_mel
+fp_mel_df = (
+    cand_df[cand_df["curation_group"] == "fp_mel_confident"]
+    .drop_duplicates("image_id")
+    .head(10)
+    .copy()
+)
+fp_mel_df = attach_clean_paths(fp_mel_df)
+fp_mel_df["selection_reason"] = "fp_mel_confident"
+fp_mel_df = fp_mel_df[KEEP_COLS].reset_index(drop=True)
+print(f"FP MEL unique images: {len(fp_mel_df)}")
+
+# --- Difficult but correct MEL -----------------------------------------------
+# MEL correctly classified but with low confidence / near decision boundary.
+# Clinically interesting: model was right but uncertain.
+difficult_mel_df = (
+    cand_df[cand_df["curation_group"] == "difficult_correct_mel"]
+    .drop_duplicates("image_id")
+    .copy()
+)
+difficult_mel_df = attach_clean_paths(difficult_mel_df)
+difficult_mel_df["selection_reason"] = "difficult_correct_mel"
+difficult_mel_df = difficult_mel_df[KEEP_COLS].reset_index(drop=True)
+print(f"Difficult correct MEL unique images: {len(difficult_mel_df)}")
+
+# --- Save CSVs ---------------------------------------------------------------
+mel_csv           = CSV_OUT_DIR / "08b_typical_mel.csv"
+nv_csv            = CSV_OUT_DIR / "08b_typical_nv.csv"
+fn_mel_csv        = CSV_OUT_DIR / "08b_fn_mel.csv"
+fp_mel_csv        = CSV_OUT_DIR / "08b_fp_mel.csv"
+difficult_mel_csv = CSV_OUT_DIR / "08b_difficult_correct_mel.csv"
+
+mel_df.to_csv(mel_csv,                 index=False)
+nv_df.to_csv(nv_csv,                   index=False)
+fn_mel_df.to_csv(fn_mel_csv,           index=False)
+fp_mel_df.to_csv(fp_mel_csv,           index=False)
+difficult_mel_df.to_csv(difficult_mel_csv, index=False)
+
+print(f"\nTypical MEL:          {len(mel_df):>3}  ->  {mel_csv.name}")
+print(f"Typical NV:           {len(nv_df):>3}  ->  {nv_csv.name}")
+print(f"FN MEL:               {len(fn_mel_df):>3}  ->  {fn_mel_csv.name}")
+print(f"FP MEL:               {len(fp_mel_df):>3}  ->  {fp_mel_csv.name}")
+print(f"Difficult correct MEL:{len(difficult_mel_df):>3}  ->  {difficult_mel_csv.name}")
+
+
+
+# ── CELL 6]:
+
+
+# =============================================================================
+# CELL 6 — Panel generation
+#
+# Block selection logic:
+#   model=CLS and gt_label=NV  -> BLOCK_CLS_NV (-12)
+#   all other combinations      -> BLOCK_DEFAULT (-1)
+#
+# We generate one panel dir per (subset, model, block) combination.
+# For NV subsets (typical_nv, fp_mel which are NV images) CLS uses -12.
+# For MEL subsets (typical_mel, fn_mel) all models use -1.
+# =============================================================================
+
+def run_command(cmd, dry_run=False):
+    print("\n$", " ".join(str(x) for x in cmd))
+    if dry_run:
+        return
+    result = subprocess.run(cmd, cwd=REPO_ROOT, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"Command failed (exit {result.returncode})")
+
+def block_for(model_key: str, gt_label: str) -> int:
+    """Return the correct block index given model and ground-truth class."""
+    if model_key == "CLS" and gt_label == "NV":
+        return BLOCK_CLS_NV
+    return BLOCK_DEFAULT
+
+def block_label_str(model_key: str, gt_label: str) -> str:
+    b = block_for(model_key, gt_label)
+    return f"block {b}"
+
+def generate_panels_for_subset(
+    subset_name: str,
+    csv_path: Path,
+    gt_label_for_block: str,      # "MEL" or "NV" — drives block selection
+) -> dict:
+    """
+    Run generate_finer_cam_panderm for each model.
+    Returns {model_key: panel_dir}.
+    """
+    out_dirs = {}
+    n = len(pd.read_csv(csv_path))
+    for model_key, cfg in SCENARIOS.items():
+        blk = block_for(model_key, gt_label_for_block)
+        panel_dir = (
+            PANEL_OUT_DIR / subset_name / model_key.lower() / f"block_{blk}"
+        )
+        panel_dir.mkdir(parents=True, exist_ok=True)
+        out_dirs[model_key] = panel_dir
+
+        cmd = [
+            sys.executable, "-m", "scripts.generate_finer_cam_panderm",
+            "--csv",                    str(csv_path),
+            "--image_col",              "image_rel_path",
+            "--img_dir",                str(HAM_ROOT),
+            "--gt_col",                 "gt_label",
+            "--checkpoint",             str(cfg["checkpoint"]),
+            "--checkpoint_model_type",  "panderm",
+            "--class_names",            CLASS_NAMES,
+            "--pooling",                cfg["pooling"],
+            "--out_dir",                str(panel_dir),
+            "--num_samples",            str(n),
+            "--method",                 CAM_METHOD,
+            "--compare_mode",           "gt_pair",
+            "--A",                      A_CLASS,
+            "--B",                      B_CLASS,
+            "--alpha",                  "0.8",
+            "--panel_items",            PANEL_ITEMS,
+            "--mask_root",              str(HAM_ROOT),
+            "--mask_col",               "mask_rel_path",
+            "--target_block_index",     str(blk),
+            "--clinician_labels",
+            "--model_display_name",     cfg["display"],
+            "--save_raw_cams",
+        ]
+        run_command(cmd, dry_run=DRY_RUN)
+    return out_dirs
+
+# Run panel generation for all four subsets
+mel_panel_dirs    = generate_panels_for_subset("typical_mel",  mel_csv,    "MEL")
+nv_panel_dirs     = generate_panels_for_subset("typical_nv",   nv_csv,     "NV")
+fn_mel_panel_dirs = generate_panels_for_subset("fn_mel",       fn_mel_csv, "MEL")
+
+if len(fp_mel_df) > 0:
+    fp_mel_panel_dirs = generate_panels_for_subset("fp_mel", fp_mel_csv, "NV")
+else:
+    fp_mel_panel_dirs = {}
+
+if len(difficult_mel_df) > 0:
+    difficult_mel_panel_dirs = generate_panels_for_subset(
+        "difficult_correct_mel", difficult_mel_csv, "MEL"
+    )
+else:
+    difficult_mel_panel_dirs = {}
+    print("[INFO] No difficult_correct_mel images.")
+
+print("\nPanel dirs:")
+for name, dirs in [
+    ("typical_mel",  mel_panel_dirs),
+    ("typical_nv",   nv_panel_dirs),
+    ("fn_mel",       fn_mel_panel_dirs),
+    ("fp_mel",       fp_mel_panel_dirs),
+    ("difficult_correct_mel", difficult_mel_panel_dirs),
+]:
+    for model_key, d in dirs.items():
+        print(f"  {name} / {model_key}: {d}")
+
+
+
+# ── CELL 7]:
+
+
+# =============================================================================
+# CELL 7 — PDF assembly helpers
+# =============================================================================
+
+PANEL_SUFFIX = PANEL_ITEMS.replace(",", "_")
+
+def load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
+    candidates = [
+        "/System/Library/Fonts/Supplemental/Arial Bold.ttf" if bold
+            else "/System/Library/Fonts/Supplemental/Arial.ttf",
+        "/Library/Fonts/Arial Bold.ttf" if bold else "/Library/Fonts/Arial.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold
+            else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    ]
+    for p in candidates:
+        try:
+            return ImageFont.truetype(p, size=size)
+        except Exception:
+            pass
+    return ImageFont.load_default()
+
+def find_panel_png(panel_dir: Path, image_id: str) -> Path:
+    candidates = sorted(panel_dir.glob(f"{image_id}*_{PANEL_SUFFIX}.png"))
+    if not candidates:
+        candidates = sorted(panel_dir.glob(f"*{image_id}*{PANEL_SUFFIX}.png"))
+    if not candidates:
+        raise FileNotFoundError(
+            f"No panel PNG matching '{image_id}' and suffix '{PANEL_SUFFIX}' in {panel_dir}"
+        )
+    return candidates[0]
+
+def add_row_label(panel_img: Image.Image, label: str) -> Image.Image:
+    label_w = 180
+    canvas = Image.new("RGB", (panel_img.width + label_w, panel_img.height), "white")
+    draw = ImageDraw.Draw(canvas)
+    font = load_font(28, bold=True)
+    canvas.paste(panel_img, (label_w, 0))
+    bbox = draw.textbbox((0, 0), label, font=font)
+    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    draw.text(
+        ((label_w - tw) / 2, panel_img.height / 2 - th / 2),
+        label, font=font, fill=(0, 0, 0),
+    )
+    return canvas
+
+def make_page(
+    image_id: str,
+    gt_label: str,
+    selection_reason: str,
+    cls_png: Path,
+    gap_png: Path,
+    cls_block_label: str,
+    gap_block_label: str,
+    pdf_title: str,
+) -> Image.Image:
+    cls_panel = Image.open(cls_png).convert("RGB")
+    gap_panel = Image.open(gap_png).convert("RGB")
+    max_w = max(cls_panel.width, gap_panel.width)
+
+    def pad_width(img, width):
+        if img.width == width:
+            return img
+        c = Image.new("RGB", (width, img.height), "white")
+        c.paste(img, ((width - img.width) // 2, 0))
+        return c
+
+    # Row labels now include the block used per model
+    cls_row = add_row_label(pad_width(cls_panel, max_w), f"CLS\n{cls_block_label}")
+    gap_row = add_row_label(pad_width(gap_panel, max_w), f"GAP\n{gap_block_label}")
+
+    margin  = 40
+    title_h = 130
+    gap_y   = 28
+    page_w  = max(cls_row.width, gap_row.width) + 2 * margin
+    page_h  = title_h + cls_row.height + gap_y + gap_row.height + 2 * margin
+
+    page = Image.new("RGB", (page_w, page_h), "white")
+    draw = ImageDraw.Draw(page)
+
+    title_font = load_font(34, bold=True)
+    sub_font   = load_font(22)
+
+    draw.text((margin, margin - 5),  pdf_title, font=title_font, fill=(0, 0, 0))
+    draw.text(
+        (margin, margin + 48),
+        f"{image_id}  |  GT: {gt_label}  |  Selection: {selection_reason}",
+        font=sub_font, fill=(70, 70, 70),
+    )
+    draw.text(
+        (margin, margin + 80),
+        "Columns: Original+mask | GradCAM MEL | GradCAM NV | Diff | FinerCAM",
+        font=sub_font, fill=(100, 100, 100),
+    )
+    draw.text(
+        (margin, margin + 108),
+        "Please circle: CLS / GAP / both / neither  —  add a short reason if possible.",
+        font=sub_font, fill=(70, 70, 70),
+    )
+
+    y = margin + title_h
+    page.paste(cls_row, (margin, y))
+    y += cls_row.height + gap_y
+    page.paste(gap_row, (margin, y))
+    return page
+
+def assemble_pdf(
+    subset_df: pd.DataFrame,
+    panel_dirs: dict,
+    pdf_title: str,
+    out_pdf: Path,
+    gt_label_for_block: str,
+) -> None:
+    pages = []
+    skipped = []
+    for _, row in subset_df.iterrows():
+        image_id = str(row["image_id"])
+        try:
+            cls_png = find_panel_png(panel_dirs["CLS"], image_id)
+            gap_png = find_panel_png(panel_dirs["GAP"], image_id)
+        except FileNotFoundError as e:
+            print(f"  [SKIP] {e}")
+            skipped.append(image_id)
+            continue
+
+        cls_blk = block_for("CLS", gt_label_for_block)
+        gap_blk = block_for("GAP", gt_label_for_block)
+
+        pages.append(make_page(
+            image_id        = image_id,
+            gt_label        = str(row["gt_label"]),
+            selection_reason= str(row["selection_reason"]),
+            cls_png         = cls_png,
+            gap_png         = gap_png,
+            cls_block_label = f"block {cls_blk}",
+            gap_block_label = f"block {gap_blk}",
+            pdf_title       = pdf_title,
+        ))
+
+    if not pages:
+        raise ValueError(f"No pages generated for {out_pdf.name}. Skipped: {skipped}")
+
+    pages[0].save(out_pdf, save_all=True, append_images=pages[1:], resolution=150.0)
+    print(f"Saved ({len(pages)} pages): {out_pdf}")
+    if skipped:
+        print(f"  Skipped {len(skipped)} images: {skipped}")
+
+
+
+# ── CELL 8]:
+
+
+# =============================================================================
+# CELL 8 — Assemble PDFs
+#
+# Naming convention:
+#   08b_model_choice_{case_type}_cls_vs_gap_blk{cls_block}_vs_blk{gap_block}.pdf
+# =============================================================================
+
+def pdf_name(case_type: str, gt_label_for_block: str) -> str:
+    cls_blk = block_for("CLS", gt_label_for_block)
+    gap_blk = block_for("GAP", gt_label_for_block)
+    return f"08b_model_choice_{case_type}_cls_blk{cls_blk}_vs_gap_blk{gap_blk}.pdf"
+
+if not DRY_RUN:
+    # Typical MEL — both models block -1
+    assemble_pdf(
+        subset_df           = mel_df,
+        panel_dirs          = mel_panel_dirs,
+        pdf_title           = "Model-choice review: typical melanoma (TP MEL)",
+        out_pdf             = PDF_OUT_DIR / pdf_name("typical_mel", "MEL"),
+        gt_label_for_block  = "MEL",
+    )
+
+    # Typical NV — CLS block -12, GAP block -1
+    assemble_pdf(
+        subset_df           = nv_df,
+        panel_dirs          = nv_panel_dirs,
+        pdf_title           = "Model-choice review: typical nevus (TN NV)",
+        out_pdf             = PDF_OUT_DIR / pdf_name("typical_nv", "NV"),
+        gt_label_for_block  = "NV",
+    )
+
+    # FN MEL — both models block -1
+    if len(fn_mel_df) > 0:
+        assemble_pdf(
+            subset_df           = fn_mel_df,
+            panel_dirs          = fn_mel_panel_dirs,
+            pdf_title           = "Model-choice review: missed melanoma (FN MEL)",
+            out_pdf             = PDF_OUT_DIR / pdf_name("fn_mel", "MEL"),
+            gt_label_for_block  = "MEL",
+        )
+    else:
+        print("[SKIP] FN MEL PDF: no images.")
+
+    # FP MEL — CLS block -12, GAP block -1 (these are NV images)
+    if len(fp_mel_df) > 0:
+        assemble_pdf(
+            subset_df           = fp_mel_df,
+            panel_dirs          = fp_mel_panel_dirs,
+            pdf_title           = "Model-choice review: NV misclassified as MEL (FP MEL)",
+            out_pdf             = PDF_OUT_DIR / pdf_name("fp_mel", "NV"),
+            gt_label_for_block  = "NV",
+        )
+    else:
+        print("[SKIP] FP MEL PDF: no images found in candidate CSV.")
+
+
+    # FP MEL confident — CLS block -12, GAP block -1 (these are NV images)
+    if len(fp_mel_df) > 0:
+        assemble_pdf(
+            subset_df           = fp_mel_df,
+            panel_dirs          = fp_mel_panel_dirs,
+            pdf_title           = "Model-choice review: NV confidently misclassified as MEL (FP MEL)",
+            out_pdf             = PDF_OUT_DIR / pdf_name("fp_mel_confident", "NV"),
+            gt_label_for_block  = "NV",
+        )
+    else:
+        print("[SKIP] FP MEL PDF: no images.")
+
+    # Difficult correct MEL — both models block -1
+    if len(difficult_mel_df) > 0:
+        assemble_pdf(
+            subset_df           = difficult_mel_df,
+            panel_dirs          = difficult_mel_panel_dirs,
+            pdf_title           = "Model-choice review: difficult but correctly classified MEL",
+            out_pdf             = PDF_OUT_DIR / pdf_name("difficult_correct_mel", "MEL"),
+            gt_label_for_block  = "MEL",
+        )
+    else:
+        print("[SKIP] Difficult correct MEL PDF: no images.")
+
+else:
+    print("DRY_RUN=True: skipping all PDF assembly.")
+
+
+
+# ── CELL 9]:
+
+
+# =============================================================================
+# CELL 9 — Annotation export
+#
+# Copies the original RGB images (not panels) to a flat folder.
+# Writes a CSV with image_id, case_type, gt_label, pred_label (if available),
+# and blank columns for Florentia to fill in.
+# =============================================================================
+
+SUBSETS_FOR_EXPORT = [
+    ("typical_mel", mel_df,    "TP_MEL"),
+    ("typical_nv",  nv_df,     "TN_NV"),
+    ("fn_mel",      fn_mel_df, "FN_MEL"),
+    ("fp_mel",      fp_mel_df, "FP_MEL"),
+    ("difficult_correct_mel", difficult_mel_df, "DIFFICULT_CORRECT_MEL"),
+]
+
+export_rows = []
+
+for case_type_key, subset_df, case_label in SUBSETS_FOR_EXPORT:
+    if len(subset_df) == 0:
+        continue
+    for _, row in subset_df.iterrows():
+        image_id    = str(row["image_id"])
+        gt_label    = str(row["gt_label"])
+        src_path    = HAM_ROOT / str(row["image_rel_path"])
+        dst_name    = f"{case_label}__{image_id}{src_path.suffix}"
+        dst_path    = EXPORT_DIR / dst_name
+
+        if src_path.exists():
+            if not DRY_RUN:
+                shutil.copy2(src_path, dst_path)
+            status = "copied"
+        else:
+            status = "SOURCE_NOT_FOUND"
+            print(f"  [WARN] Source not found: {src_path}")
+
+        export_rows.append({
+            "case_type":            case_label,
+            "image_id":             image_id,
+            "gt_label":             gt_label,
+            "selection_reason":     str(row["selection_reason"]),
+            "export_filename":      dst_name,
+            "copy_status":          status,
+            # Blank columns for Florentia / you to fill in later
+            "dermatologist_prefers_model":  "",   # CLS / GAP / both / neither
+            "dermatologist_comment":        "",
+            "annotation_done":              "",   # yes / no
+        })
+
+export_df  = pd.DataFrame(export_rows)
+export_csv = CSV_OUT_DIR / "08b_export_manifest.csv"
+export_df.to_csv(export_csv, index=False)
+
+print(f"\nExport manifest saved: {export_csv}")
+print(f"Images copied to:      {EXPORT_DIR}")
+print(export_df[["case_type", "image_id", "gt_label", "copy_status"]].to_string(index=False))
+
+
+
+# ── CELL 10]:
+
+
+# =============================================================================
+# CELL 10 — Dermatologist annotation sheet (blank)
+#
+# A separate lightweight CSV for Florentia to fill in during the review session.
+# Keyed only on image_id and export_filename so it is easy to hand back.
+# =============================================================================
+
+annotation_df = export_df[[
+    "case_type", "image_id", "gt_label",
+    "export_filename",
+    "dermatologist_prefers_model",
+    "dermatologist_comment",
+]].copy()
+
+annotation_csv = CSV_OUT_DIR / "08b_annotation_sheet_blank.csv"
+annotation_df.to_csv(annotation_csv, index=False)
+print(f"Blank annotation sheet: {annotation_csv}")
+display(annotation_df)
+
