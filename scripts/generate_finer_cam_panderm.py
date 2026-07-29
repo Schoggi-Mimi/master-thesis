@@ -821,6 +821,43 @@ class PanDermCAMWrapper(torch.nn.Module):
                 out = out[first_key]
         return out
 
+      
+# =========================================================================
+# Top-10% threshold for GradCAM target and reference overlays only.
+# XAI 1 (diff) and XAI 2 (FinerCAM) are left untouched.
+# Only the display overlay is modified — raw CAM arrays are unchanged.
+# =========================================================================
+def apply_top10_threshold_to_overlay(
+    cam_map: np.ndarray,
+    rgb_base: np.ndarray,
+    alpha_overlay: float = 0.45,
+) -> np.ndarray:
+    """
+    Recompose the overlay using only activations in the top 10th percentile.
+    Regions below the threshold fall back to the original RGB image.
+    cam_map: H x W float32 in [0, 1]
+    rgb_base: H x W x 3 float32 in [0, 1]
+    """
+    cam = np.asarray(cam_map, dtype=np.float32)
+    threshold = np.percentile(cam, 90)
+    masked_cam = np.where(cam >= threshold, cam, 0.0)
+
+    # Re-normalise the masked map to [0, 1] so the colormap stays consistent
+    cam_max = masked_cam.max()
+    if cam_max > 1e-8:
+        masked_cam = masked_cam / cam_max
+
+    heat = cv2.applyColorMap(
+        (masked_cam * 255.0).astype(np.uint8), cv2.COLORMAP_JET
+    )
+    heat = cv2.cvtColor(heat, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+
+    # Where cam is below threshold (masked_cam == 0), show original RGB
+    mask_vis = (masked_cam > 0).astype(np.float32)[..., np.newaxis]
+    overlay = mask_vis * np.clip(0.55 * rgb_base + alpha_overlay * heat, 0.0, 1.0) \
+            + (1.0 - mask_vis) * rgb_base
+
+    return np.clip(overlay, 0.0, 1.0)
 
 def vit_reshape_transform(tensor: torch.Tensor) -> torch.Tensor:
     if tensor.ndim != 3:
@@ -1633,6 +1670,15 @@ def main() -> None:
             seg_gate_line1 = "Predicted Seg Gate"
             seg_gate_line2 = "auxiliary head"
 
+        gradcam_overlay_a_display = apply_top10_threshold_to_overlay(
+            cam_map=res["cam_gradcam"],
+            rgb_base=rgb_resized,
+        )
+        gradcam_overlay_b_display = apply_top10_threshold_to_overlay(
+            cam_map=res["cam_gradcam_B"],
+            rgb_base=rgb_resized,
+        )
+
         panel_img_uint8 = make_panel_with_subtitles(
             first_tile_line1=first_tile_line1,
             first_tile_line2=first_tile_line2,
@@ -1640,11 +1686,11 @@ def main() -> None:
             gt_mask_overlay=gt_mask_overlay,
             gt_mask_binary=gt_mask_binary,
             seg_gate_overlay=seg_gate_overlay,
-            gradcam_overlay_a=res["overlay_gradcam"],
+            gradcam_overlay_a=gradcam_overlay_a_display,
             gradcam_a_line1=gradcam_a_line1,
             gradcam_a_line2=gradcam_a_line2,
             gradcam_a_line2_color=gradcam_a_line2_color,
-            gradcam_overlay_b=res["overlay_gradcam_B"],
+            gradcam_overlay_b=gradcam_overlay_b_display,
             gradcam_b_line1=gradcam_b_line1,
             gradcam_b_line2=gradcam_b_line2,
             gradcam_diff_overlay=res["overlay_gradcam_diff"],

@@ -140,6 +140,7 @@ python -m run_panderm_full_finetune_ha \
   --dal-lambda "$DAL_LAMBDA" \
   --dal-mode "$DAL_MODE" \
   --dal-topk "$DAL_TOPK" \
+  --init-checkpoint "${INIT_CHECKPOINT:-}" \
   --debug-batches 0 \
   --wandb-name "$WANDB_NAME" \
   --wandb-project "$WANDB_PROJECT" \
