@@ -436,3 +436,5 @@ FodyWeavers.xsd
 
 .DS_Store
 configs/
+figures/
+notebooks/mel_nv/notebook_audit_input.txt

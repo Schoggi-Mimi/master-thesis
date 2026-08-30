@@ -47,6 +47,18 @@ def pick_top2_classes(logits: torch.Tensor) -> Tuple[int, int, torch.Tensor]:
     A, B = int(top2[0]), int(top2[1])
     return A, B, probs
 
+def _run_finercam_only(model, input_tensor, rgb_float, target_layer, A, B,
+                       reshape_transform=None, comparison_categories=None,
+                       alpha=0.6):
+    finer = FinerCAM(model=model, target_layers=[target_layer],
+                     reshape_transform=reshape_transform)
+    if not comparison_categories:
+        comparison_categories = [B]
+    target = FinerWeightedTarget(main_category=A,
+                                 comparison_categories=comparison_categories,
+                                 alpha=alpha)
+    cam = finer(input_tensor=input_tensor, targets=[target])[0]
+    return cam, show_cam_on_image_clinician(rgb_float, cam)
 
 def _run_standard_cam(
     cam_cls,
@@ -462,17 +474,22 @@ def compute_cam_bundle(
         reshape_transform=reshape_transform,
     )
 
-    _, _, cam_finer, _, _, vis_finer = _run_finercam(
-        model,
-        input_tensor,
-        rgb_float,
-        target_layer,
-        A,
-        B,
+    cam_finer, vis_finer = _run_finercam_only(
+        model, input_tensor, rgb_float, target_layer, A, B,
         reshape_transform=reshape_transform,
-        comparison_categories=comparison_categories,
-        alpha=alpha,
+        comparison_categories=comparison_categories, alpha=alpha,
     )
+    # _, _, cam_finer, _, _, vis_finer = _run_finercam(
+    #     model,
+    #     input_tensor,
+    #     rgb_float,
+    #     target_layer,
+    #     A,
+    #     B,
+    #     reshape_transform=reshape_transform,
+    #     comparison_categories=comparison_categories,
+    #     alpha=alpha,
+    # )
 
     cam_rollout = None
     vis_rollout = None

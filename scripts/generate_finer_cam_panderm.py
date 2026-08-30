@@ -602,11 +602,36 @@ def remap_official_finetune_checkpoint_keys(state_dict: dict[str, torch.Tensor])
 
     # Multitask segmentation checkpoints contain an extra segmentation head.
     # The CAM script only needs the classification backbone/head, so remove it.
-    for key in list(remapped.keys()):
-        if key.startswith("seg_head."):
-            remapped.pop(key, None)
+    # for key in list(remapped.keys()):
+    #     if key.startswith("seg_head."):
+    #         remapped.pop(key, None)
 
     return remapped
+
+def remap_norm_keys_for_pooling(checkpoint_model, model):
+    """Route final LayerNorm weights to whichever norm the built model has.
+    GAP models expose fc_norm. CLS models expose norm.
+    """
+    state = model.state_dict()
+    has_norm = "norm.weight" in state
+    has_fc_norm = "fc_norm.weight" in state
+
+    for key in list(checkpoint_model.keys()):
+        if key.startswith("norm."):
+            if has_fc_norm:
+                checkpoint_model[key.replace("norm.", "fc_norm.", 1)] = checkpoint_model.pop(key)
+            elif has_norm:
+                continue
+            else:
+                checkpoint_model.pop(key, None)
+        elif key.startswith("fc_norm."):
+            if has_norm:
+                checkpoint_model[key.replace("fc_norm.", "norm.", 1)] = checkpoint_model.pop(key)
+            elif has_fc_norm:
+                continue
+            else:
+                checkpoint_model.pop(key, None)
+    return checkpoint_model
 
 
 # ---- Begin: multitask/seg_gate checkpoint helpers ----
@@ -733,8 +758,9 @@ def load_panderm_finetuned_model(
             variant=variant,
             use_mean_pooling=use_mean_pooling,
         )
-
+        state_dict = remap_norm_keys_for_pooling(state_dict, model) 
         state_dict_model = model.state_dict()
+
         for k in ["head.weight", "head.bias"]:
             if k in state_dict and k in state_dict_model and state_dict[k].shape != state_dict_model[k].shape:
                 raise ValueError(
@@ -743,6 +769,10 @@ def load_panderm_finetuned_model(
                 )
 
         missing, unexpected = model.load_state_dict(state_dict, strict=False)
+        critical = [k for k in list(missing) + list(unexpected)
+                    if k.startswith(("norm.", "fc_norm.", "head."))]
+        if critical:
+            raise RuntimeError(f"Critical key mismatch on load: {critical}")
 
     elif checkpoint_model_type in ["multitask", "seggate"]:
         prepared_state_dict = prepare_multitask_state_dict_for_cam(raw_state_dict)
@@ -759,7 +789,7 @@ def load_panderm_finetuned_model(
             seg_gate_bg_keep=seg_gate_bg_keep,
             seg_gate_detach=seg_gate_detach,
         )
-
+        prepared_state_dict = remap_norm_keys_for_pooling(prepared_state_dict, model)
         state_dict_model = model.state_dict()
         for k in ["backbone.head.weight", "backbone.head.bias"]:
             if k in prepared_state_dict and k in state_dict_model and prepared_state_dict[k].shape != state_dict_model[k].shape:
@@ -1232,13 +1262,12 @@ def main() -> None:
     if args.image_size is not None:
         image_size = args.image_size
 
-    preprocess = get_eval_transforms(which_img_norm="imagenet", img_resize=256, center_crop=True)
-    if preprocess is None:
-        preprocess = T.Compose([
-            T.Resize((image_size, image_size)),
-            T.ToTensor(),
-            T.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
-        ])
+    # Match SimplePairedDermTransform used in HA training and validation.
+    preprocess = T.Compose([
+        T.Resize((image_size, image_size), interpolation=T.InterpolationMode.BILINEAR),
+        T.ToTensor(),
+        T.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+    ])
 
     if hasattr(model_raw, "backbone"):
         blocks = model_raw.backbone.blocks
