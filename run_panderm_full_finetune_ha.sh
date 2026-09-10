@@ -1,17 +1,18 @@
 #!/bin/bash
 #SBATCH --job-name=panderm_ha
-#SBATCH --output=logs/panderm_ha_%j.out
-#SBATCH --error=logs/panderm_ha_%j.err
+#SBATCH --account=gratis
+#SBATCH --partition=gpu
+#SBATCH --qos=job_gratis
+#SBATCH --gres=gpu:h100:1
 #SBATCH --time=6:00:00
-#SBATCH --mail-user=choekyel.nyungmartsang@students.unibe.ch
-#SBATCH --mail-type=END,FAIL
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
-#SBATCH --partition=gpu
-#SBATCH --gres=gpu:rtx4090:1
-#SBATCH --qos=job_gratis
+#SBATCH --output=/storage/homefs/cn21m021/logs/panderm_ha_%j.out
+#SBATCH --error=/storage/homefs/cn21m021/logs/panderm_ha_%j.err
+#SBATCH --mail-user=choekyel.nyungmartsang@students.unibe.ch
+#SBATCH --mail-type=END,FAIL
 
 
 REPO_ROOT="$HOME/projects/master-thesis"
@@ -27,6 +28,10 @@ fi
 module load Anaconda3
 eval "$(conda shell.bash hook)"
 conda activate thesis
+
+echo "JOB ${SLURM_JOB_ID} NODE $(hostname -s) GPU $(nvidia-smi --query-gpu=name --format=csv,noheader)"
+export TORCH_HOME="${TMPDIR}/torch"
+export HF_HOME="${TMPDIR}/hf"
 
 # Toggle the explanation losses here.
 # You can either edit the defaults below or override them from the command line.

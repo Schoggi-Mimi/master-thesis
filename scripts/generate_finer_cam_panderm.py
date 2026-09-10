@@ -714,7 +714,94 @@ def infer_variant_from_checkpoint_dict(ckpt: dict) -> tuple[dict[str, torch.Tens
     variant = infer_panderm_variant_from_state_dict(state_dict)
     return state_dict, checkpoint_format, variant
 
+def remap_norm_keys_for_pooling_local(
+    checkpoint_model: dict[str, torch.Tensor],
+    model: torch.nn.Module,
+    prefix: str = "",
+) -> dict[str, torch.Tensor]:
+    """
+    Pooling aware final-norm key remapping.
 
+    PanDerm builds exactly one of these depending on pooling.
+        use_mean_pooling=True   ->  fc_norm exists, norm is None
+        use_mean_pooling=False  ->  norm exists, fc_norm is None
+
+    remap_official_finetune_checkpoint_keys renames norm. -> fc_norm.
+    unconditionally, which silently breaks CLS checkpoints. This reverses
+    the rename when the target model expects the other name.
+
+    prefix supports wrapper models whose keys are backbone.norm.* etc.
+    """
+    state = model.state_dict()
+    key_norm = f"{prefix}norm."
+    key_fc = f"{prefix}fc_norm."
+
+    has_norm = f"{key_norm}weight" in state
+    has_fc_norm = f"{key_fc}weight" in state
+
+    if has_norm == has_fc_norm:
+        # neither present, or both present. nothing safe to infer.
+        return checkpoint_model
+
+    remapped = dict(checkpoint_model)
+
+    for key in list(remapped.keys()):
+        if key.startswith(key_norm) and not key.startswith(key_fc):
+            if has_fc_norm:
+                new_key = key.replace(key_norm, key_fc, 1)
+                if new_key not in remapped:
+                    remapped[new_key] = remapped[key]
+                remapped.pop(key, None)
+        elif key.startswith(key_fc):
+            if has_norm:
+                new_key = key.replace(key_fc, key_norm, 1)
+                if new_key not in remapped:
+                    remapped[new_key] = remapped[key]
+                remapped.pop(key, None)
+
+    return remapped
+
+def infer_checkpoint_pooling(ckpt: dict, raw_state_dict: dict) -> str | None:
+    """
+    Determine which pooling a finetuned checkpoint was trained with.
+
+    Must run on the RAW state dict, before remap_official_finetune_checkpoint_keys,
+    because that function renames norm. -> fc_norm. unconditionally and destroys
+    the distinguishing evidence.
+
+    Returns "mean", "cls", or None when undetermined.
+    """
+    # 1. saved training args, most reliable
+    args_obj = ckpt.get("args") if isinstance(ckpt, dict) else None
+    if args_obj is not None:
+        a = vars(args_obj) if not isinstance(args_obj, dict) else args_obj
+        if "pooling" in a and a["pooling"] in {"mean", "cls"}:
+            return str(a["pooling"])
+        if "use_mean_pooling" in a:
+            return "mean" if bool(a["use_mean_pooling"]) else "cls"
+
+    # 2. raw key inspection
+    def strip(k):
+        for p in ("module.", "backbone.", "multitask_model."):
+            if k.startswith(p):
+                k = k[len(p):]
+        return k
+
+    keys = {strip(k) for k in raw_state_dict}
+
+    # foundation checkpoints carry encoder. or decoder. and are not
+    # pooling specific, so refuse to infer from those
+    if any(k.startswith(("encoder.", "decoder.", "teacher.")) for k in raw_state_dict):
+        return None
+
+    has_fc = any(k.startswith("fc_norm.") for k in keys)
+    has_norm = any(k.startswith("norm.") for k in keys)
+
+    if has_fc and not has_norm:
+        return "mean"
+    if has_norm and not has_fc:
+        return "cls"
+    return None
 
 def load_panderm_finetuned_model(
     checkpoint_path: str | Path,
@@ -740,6 +827,24 @@ def load_panderm_finetuned_model(
 
     ckpt = torch.load(checkpoint_path, map_location="cpu")
     raw_state_dict, checkpoint_format = extract_checkpoint_state_dict(ckpt)
+    ckpt = torch.load(checkpoint_path, map_location="cpu")
+    raw_state_dict, checkpoint_format = extract_checkpoint_state_dict(ckpt)
+
+    # -------- pooling guard, must run on RAW keys --------------------------
+    ckpt_pooling = infer_checkpoint_pooling(ckpt, raw_state_dict)
+    if ckpt_pooling is not None and ckpt_pooling != pooling:
+        raise RuntimeError(
+            f"Pooling mismatch for {checkpoint_path.name}. "
+            f"Checkpoint was trained with pooling={ckpt_pooling} but "
+            f"pooling={pooling} was requested. "
+            f"Shapes are compatible so this would load silently and produce "
+            f"meaningless CAMs. Pass the matching --pooling."
+        )
+    if ckpt_pooling is None:
+        print(f"[warn] could not determine pooling for {checkpoint_path.name}. "
+              f"Proceeding with requested pooling={pooling}.")
+    # -----------------------------------------------------------------------
+
     raw_has_seg_head = has_multitask_seg_head(raw_state_dict)
 
     if checkpoint_model_type == "auto":
@@ -753,31 +858,37 @@ def load_panderm_finetuned_model(
     if checkpoint_model_type == "panderm":
         state_dict = remap_official_finetune_checkpoint_keys(raw_state_dict)
         variant = infer_panderm_variant_from_state_dict(state_dict)
+
         model = build_panderm_model(
             num_classes=num_classes,
             variant=variant,
             use_mean_pooling=use_mean_pooling,
         )
-        state_dict = remap_norm_keys_for_pooling(state_dict, model) 
-        state_dict_model = model.state_dict()
 
+        state_dict = remap_norm_keys_for_pooling_local(state_dict, model, prefix="")
+
+        state_dict_model = model.state_dict()
         for k in ["head.weight", "head.bias"]:
-            if k in state_dict and k in state_dict_model and state_dict[k].shape != state_dict_model[k].shape:
+            if (
+                k in state_dict
+                and k in state_dict_model
+                and state_dict[k].shape != state_dict_model[k].shape
+            ):
                 raise ValueError(
-                    f"Checkpoint head shape mismatch for {k}: checkpoint={tuple(state_dict[k].shape)} vs model={tuple(state_dict_model[k].shape)}. "
-                    f"Check that --class_preset / --class_names matches the trained checkpoint."
+                    f"Checkpoint head shape mismatch for {k}: "
+                    f"checkpoint={tuple(state_dict[k].shape)} vs "
+                    f"model={tuple(state_dict_model[k].shape)}. "
+                    f"Check that --class_preset / --class_names matches the checkpoint."
                 )
 
         missing, unexpected = model.load_state_dict(state_dict, strict=False)
-        critical = [k for k in list(missing) + list(unexpected)
-                    if k.startswith(("norm.", "fc_norm.", "head."))]
-        if critical:
-            raise RuntimeError(f"Critical key mismatch on load: {critical}")
+        critical_prefixes = ("norm.", "fc_norm.", "head.")
 
     elif checkpoint_model_type in ["multitask", "seggate"]:
         prepared_state_dict = prepare_multitask_state_dict_for_cam(raw_state_dict)
         variant_probe_state_dict = remap_official_finetune_checkpoint_keys(raw_state_dict)
         variant = infer_panderm_variant_from_state_dict(variant_probe_state_dict)
+
         backbone = build_panderm_model(
             num_classes=num_classes,
             variant=variant,
@@ -789,22 +900,48 @@ def load_panderm_finetuned_model(
             seg_gate_bg_keep=seg_gate_bg_keep,
             seg_gate_detach=seg_gate_detach,
         )
-        prepared_state_dict = remap_norm_keys_for_pooling(prepared_state_dict, model)
+
+        prepared_state_dict = remap_norm_keys_for_pooling_local(
+            prepared_state_dict, model, prefix="backbone."
+        )
+
         state_dict_model = model.state_dict()
         for k in ["backbone.head.weight", "backbone.head.bias"]:
-            if k in prepared_state_dict and k in state_dict_model and prepared_state_dict[k].shape != state_dict_model[k].shape:
+            if (
+                k in prepared_state_dict
+                and k in state_dict_model
+                and prepared_state_dict[k].shape != state_dict_model[k].shape
+            ):
                 raise ValueError(
-                    f"Checkpoint head shape mismatch for {k}: checkpoint={tuple(prepared_state_dict[k].shape)} vs model={tuple(state_dict_model[k].shape)}. "
-                    f"Check that --class_preset / --class_names matches the trained checkpoint."
+                    f"Checkpoint head shape mismatch for {k}: "
+                    f"checkpoint={tuple(prepared_state_dict[k].shape)} vs "
+                    f"model={tuple(state_dict_model[k].shape)}. "
+                    f"Check that --class_preset / --class_names matches the checkpoint."
                 )
 
         missing, unexpected = model.load_state_dict(prepared_state_dict, strict=False)
+        critical_prefixes = (
+            "backbone.norm.", "backbone.fc_norm.", "backbone.head.",
+        )
 
     else:
         raise ValueError(f"Unsupported checkpoint_model_type: {checkpoint_model_type}")
 
+    critical = [
+        k for k in list(missing) + list(unexpected)
+        if k.startswith(critical_prefixes)
+    ]
+    if critical:
+        raise RuntimeError(
+            f"Critical key mismatch loading {checkpoint_path.name} "
+            f"with pooling={pooling}: {critical}. "
+            f"A missing norm or head key means those weights would stay randomly "
+            f"initialised. Check that the checkpoint pooling matches --pooling."
+        )
+
     if len(missing) or len(unexpected):
-        print(f"[warn] load_state_dict mismatch: missing={len(missing)}, unexpected={len(unexpected)}")
+        print(f"[warn] load_state_dict mismatch: "
+              f"missing={len(missing)}, unexpected={len(unexpected)}")
         if missing:
             print("  missing sample:", missing[:10])
         if unexpected:
@@ -812,6 +949,14 @@ def load_panderm_finetuned_model(
 
     model = model.to(device)
     model.eval()
+
+    base = model.backbone if hasattr(model, "backbone") else model
+    actual_pooling = bool(getattr(base, "use_mean_pooling", False))
+    if actual_pooling != use_mean_pooling:
+        raise RuntimeError(
+            f"Pooling flag mismatch. requested use_mean_pooling={use_mean_pooling}, "
+            f"model reports {actual_pooling}."
+        )
 
     info = {
         "arch": f"PanDerm {variant.capitalize()} FT",
