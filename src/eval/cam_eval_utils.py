@@ -1,12 +1,21 @@
 """
 Shared utilities for CAM versus annotation overlap evaluation.
 
-The evaluation pipeline preprocesses images as:
-    Resize(shorter side -> 256) -> CenterCrop(224)
+GEOMETRY. Two incompatible preprocessing pipelines exist in this project.
 
-Clinician annotations were drawn on the ORIGINAL image, so they must go
-through the identical geometric transform before they can be compared to
-a CAM. Every notebook must use these functions and no local copies.
+  squash224   Resize((224, 224)). Used by SimplePairedDermTransform during
+              HA fine tuning, validation and test. Keeps the whole frame,
+              distorts aspect ratio. A 600x450 image is compressed 0.373 in
+              x and 0.498 in y.
+
+  crop224     Resize(short side to 256) then CenterCrop(224). The PanDerm
+              default eval transform. Preserves aspect, discards roughly
+              42 percent of a 600x450 frame, almost all horizontally.
+
+Clinician annotations were drawn on the ORIGINAL image, so the mask, the
+image tensor and any display RGB must all pass through the SAME geometry.
+Use transform_mask, mask_to_cam_grid_geom and transform_rgb. Do not write
+local copies.
 """
 from __future__ import annotations
 
@@ -73,6 +82,82 @@ def mask_to_cam_grid(
     return cv2.resize(m.astype(np.float32), (grid, grid),
                       interpolation=cv2.INTER_AREA)
 
+def squash_mask(
+    mask_bool: np.ndarray,
+    size: int = CROP_SIZE,
+) -> tuple[np.ndarray, float]:
+    """
+    Apply Resize((size, size)) to a binary mask. Training geometry.
+
+    Nothing is discarded, so the kept fraction is always 1.0. It is
+    returned only so the signature matches resize_centercrop_mask.
+    """
+    m = np.asarray(mask_bool).astype(np.uint8)
+    out = cv2.resize(m, (size, size),
+                     interpolation=cv2.INTER_NEAREST).astype(bool)
+    return out, 1.0
+
+
+def transform_mask(
+    mask_bool: np.ndarray,
+    geometry: str,
+) -> tuple[np.ndarray, float]:
+    """
+    Geometry aware mask transform. Drop in replacement for
+    resize_centercrop_mask. Returns (mask_224, kept_fraction).
+    """
+    if geometry == "squash224":
+        return squash_mask(mask_bool)
+    if geometry == "crop224":
+        return resize_centercrop_mask(mask_bool)
+    raise ValueError(f"unknown geometry {geometry!r}. "
+                     f"Use 'squash224' or 'crop224'.")
+
+
+def mask_to_cam_grid_geom(
+    mask_bool: np.ndarray,
+    geometry: str,
+    grid: int = CAM_GRID,
+) -> np.ndarray:
+    """
+    Original mask straight to CAM grid occupancy in [0, 1].
+    INTER_AREA gives the true area fraction per patch.
+    """
+    m, _ = transform_mask(mask_bool, geometry)
+    return cv2.resize(m.astype(np.float32), (grid, grid),
+                      interpolation=cv2.INTER_AREA)
+
+
+def transform_rgb(img_rgb: np.ndarray, geometry: str) -> np.ndarray:
+    """
+    Display only. Produces the 224x224 view the model actually receives.
+    Must match transform_mask or every overlay is spatially shifted.
+    """
+    if geometry == "squash224":
+        return cv2.resize(img_rgb, (CROP_SIZE, CROP_SIZE),
+                          interpolation=cv2.INTER_LINEAR)
+    if geometry == "crop224":
+        h, w = img_rgb.shape[:2]
+        s = RESIZE_SHORT / min(h, w)
+        nh, nw = int(round(h * s)), int(round(w * s))
+        im = cv2.resize(img_rgb, (nw, nh), interpolation=cv2.INTER_LINEAR)
+        t, l = (nh - CROP_SIZE) // 2, (nw - CROP_SIZE) // 2
+        return im[t:t + CROP_SIZE, l:l + CROP_SIZE]
+    raise ValueError(f"unknown geometry {geometry!r}")
+
+
+def patch_footprint(geometry: str, orig_h: int = 450, orig_w: int = 600,
+                    grid: int = CAM_GRID) -> tuple[float, float]:
+    """
+    How many ORIGINAL pixels one CAM patch covers. Diagnostic only.
+    squash224 patches are larger horizontally, so small structures are
+    harder to resolve than under crop224.
+    """
+    px = CROP_SIZE / grid
+    if geometry == "squash224":
+        return px / (CROP_SIZE / orig_h), px / (CROP_SIZE / orig_w)
+    s = RESIZE_SHORT / min(orig_h, orig_w)
+    return px / s, px / s
 
 def cam_to_grid(cam_224: np.ndarray, grid: int = CAM_GRID) -> np.ndarray:
     """

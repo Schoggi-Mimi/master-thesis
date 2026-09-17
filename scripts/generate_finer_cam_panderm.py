@@ -237,6 +237,21 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--out_dir", type=str, default="outputs/panderm_cam", help="Output folder.")
     parser.add_argument("--image_size", type=int, default=224, help="PanDerm input size. Default: 224.")
+    parser.add_argument(
+        "--input_geometry",
+        type=str,
+        default="squash224",
+        choices=["squash224", "crop224"],
+        help=(
+            "squash224  Resize((224,224)). Matches SimplePairedDermTransform used "
+            "by HA fine-tuning, keeps the whole frame, distorts aspect. Also the "
+            "only setting where the overlay matches the tensor, since rgb_resized "
+            "is built by squashing. REQUIRED for HA checkpoints. "
+            "crop224    Resize(256) then CenterCrop(224). PanDerm default. "
+            "Discards roughly 42 percent of a 600x450 frame and misaligns the "
+            "overlay against the tensor."
+        ),
+    )
     parser.add_argument("--num_samples", type=int, default=10, help="How many images to process.")
     parser.add_argument("--device", type=str, default=None, help="cpu / cuda / mps (default: auto).")
     parser.add_argument("--method", type=str, default="finercam", choices=["gradcam", "layercam", "finercam"], help="CAM backend for the main triplet.")
@@ -708,12 +723,6 @@ def infer_panderm_variant_from_state_dict(state_dict: dict[str, torch.Tensor]) -
     )
 
 
-def infer_variant_from_checkpoint_dict(ckpt: dict) -> tuple[dict[str, torch.Tensor], str, str]:
-    raw_state_dict, checkpoint_format = extract_checkpoint_state_dict(ckpt)
-    state_dict = remap_official_finetune_checkpoint_keys(raw_state_dict)
-    variant = infer_panderm_variant_from_state_dict(state_dict)
-    return state_dict, checkpoint_format, variant
-
 def remap_norm_keys_for_pooling_local(
     checkpoint_model: dict[str, torch.Tensor],
     model: torch.nn.Module,
@@ -825,8 +834,6 @@ def load_panderm_finetuned_model(
         raise ValueError(f"Unsupported pooling: {pooling}. Expected 'mean' or 'cls'.")
     use_mean_pooling = pooling == "mean"
 
-    ckpt = torch.load(checkpoint_path, map_location="cpu")
-    raw_state_dict, checkpoint_format = extract_checkpoint_state_dict(ckpt)
     ckpt = torch.load(checkpoint_path, map_location="cpu")
     raw_state_dict, checkpoint_format = extract_checkpoint_state_dict(ckpt)
 
@@ -1407,12 +1414,29 @@ def main() -> None:
     if args.image_size is not None:
         image_size = args.image_size
 
-    # Match SimplePairedDermTransform used in HA training and validation.
-    preprocess = T.Compose([
-        T.Resize((image_size, image_size), interpolation=T.InterpolationMode.BILINEAR),
-        T.ToTensor(),
-        T.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
-    ])
+    if args.input_geometry == "squash224":
+        preprocess = T.Compose([
+            T.Resize((image_size, image_size),
+                     interpolation=T.InterpolationMode.BILINEAR),
+            T.ToTensor(),
+            T.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+        ])
+        print("[info] geometry squash224. Matches HA training. "
+              "Overlay and tensor share the same frame.")
+    else:
+        preprocess = get_eval_transforms(which_img_norm="imagenet",
+                                         img_resize=256, center_crop=True)
+        if preprocess is None:
+            preprocess = T.Compose([
+                T.Resize(256),
+                T.CenterCrop(image_size),
+                T.ToTensor(),
+                T.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+            ])
+        print("[warn] geometry crop224. If this checkpoint was trained with "
+              "SimplePairedDermTransform the input is cropped relative to "
+              "training, and rgb_resized squashes so the overlay is misaligned "
+              "against the tensor by roughly 100 original pixels horizontally.")
 
     if hasattr(model_raw, "backbone"):
         blocks = model_raw.backbone.blocks
@@ -1931,6 +1955,7 @@ def main() -> None:
                 "prediction_status": prediction_status,
                 "model_type": "panderm_ft",
                 "image_size": image_size,
+                "input_geometry": args.input_geometry,
                 "device": device,
                 "A_idx": int(res["A"]),
                 "B_idx": int(res["B"]),
