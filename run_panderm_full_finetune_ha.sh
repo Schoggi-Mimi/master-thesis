@@ -14,7 +14,6 @@
 #SBATCH --mail-user=choekyel.nyungmartsang@students.unibe.ch
 #SBATCH --mail-type=END,FAIL
 
-
 REPO_ROOT="$HOME/projects/master-thesis"
 REPO_DIR="$REPO_ROOT/scripts"
 cd "$REPO_DIR"
@@ -69,6 +68,11 @@ LR=${LR:-1e-5}
 MIXUP=${MIXUP:-0.0}
 CUTMIX=${CUTMIX:-0.0}
 SMOOTHING=${SMOOTHING:-0.0}
+FEAT_LAMBDA=${FEAT_LAMBDA:-0.0}
+FEAT_RULE=${FEAT_RULE:-both}
+FEAT_BATCH_SIZE=${FEAT_BATCH_SIZE:-8}
+FEAT_VAL_CSV=${FEAT_VAL_CSV:-}
+FOLD=${FOLD:--1}
 
 HA_LOSS_TYPE=${HA_LOSS_TYPE:-paper_dice}
 CHECKPOINT_KEEP_DIR=${CHECKPOINT_KEEP_DIR:-../external/checkpoints4}
@@ -88,6 +92,7 @@ MASK_KEY=${MASK_KEY:-mask_rel_path}
 NB_CLASSES=${NB_CLASSES:-7}
 EXPERIMENT_TAG=${EXPERIMENT_TAG:-foundation}
 OUTPUT_ROOT=${OUTPUT_ROOT:-../outputs}
+DEBUG_BATCHES=${DEBUG_BATCHES:-0}
 
 WANDB_PROJECT=${WANDB_PROJECT:-master-thesis-mel-nv}
 
@@ -103,6 +108,11 @@ else
   else
     LOSS_TAG="${EXPERIMENT_TAG}_${POOLING_TAG}_ha${HA_LAMBDA}_start${HA_START_EPOCH}_${HA_LOSS_TYPE}_fp${HA_FP_WEIGHT}_dal${DAL_LAMBDA}_${DAL_MODE}_top${DAL_TOPK}_classes${NB_CLASSES}_ep${EPOCHS}_lr${LR}"
   fi
+fi
+
+if [[ "$FEAT_LAMBDA" != "0.0" && "$FEAT_LAMBDA" != "0" ]]; then
+  FEAT_TAG=$(echo "$FEAT_LAMBDA" | sed 's/\./p/')
+  LOSS_TAG="a2_${POOLING_TAG}_feat${FEAT_TAG}_${FEAT_RULE}_fold${FOLD}_ep${EPOCHS}_lr${LR}"
 fi
 
 WANDB_NAME=${WANDB_NAME:-${LOSS_TAG}}
@@ -146,13 +156,18 @@ python -m run_panderm_full_finetune_ha \
   --dal-mode "$DAL_MODE" \
   --dal-topk "$DAL_TOPK" \
   --init-checkpoint "${INIT_CHECKPOINT:-}" \
-  --debug-batches 0 \
+  --debug-batches "$DEBUG_BATCHES" \
   --wandb-name "$WANDB_NAME" \
   --wandb-project "$WANDB_PROJECT" \
   --wandb-entity "$WANDB_ENTITY" \
   --wandb-mode "$WANDB_MODE" \
   --disable-color-jitter \
-  --disable-amp
+  --disable-amp \
+  --feat-lambda "$FEAT_LAMBDA" \
+  --feat-rule "$FEAT_RULE" \
+  --feat-batch-size "$FEAT_BATCH_SIZE" \
+  --feat-val-csv "$FEAT_VAL_CSV" \
+  --fold "$FOLD"
 
 BEST_CKPT="$OUTPUT_ROOT/panderm_${LOSS_TAG}/checkpoint-best.pth"
 if [[ -f "$BEST_CKPT" ]]; then
