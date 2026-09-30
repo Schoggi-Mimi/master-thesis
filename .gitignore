@@ -438,3 +438,5 @@ FodyWeavers.xsd
 configs/
 figures/
 notebooks/mel_nv/notebook_audit_input.txt
+
+.venv
