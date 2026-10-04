@@ -112,7 +112,7 @@ fi
 
 if [[ "$FEAT_LAMBDA" != "0.0" && "$FEAT_LAMBDA" != "0" ]]; then
   FEAT_TAG=$(echo "$FEAT_LAMBDA" | sed 's/\./p/')
-  LOSS_TAG="a2_${POOLING_TAG}_feat${FEAT_TAG}_${FEAT_RULE}_fold${FOLD}_ep${EPOCHS}_lr${LR}"
+  LOSS_TAG="${EXPERIMENT_TAG}_${POOLING_TAG}_ha${HA_LAMBDA}_feat${FEAT_TAG}_${FEAT_RULE}_fold${FOLD}_ep${EPOCHS}_lr${LR}"
 fi
 
 WANDB_NAME=${WANDB_NAME:-${LOSS_TAG}}

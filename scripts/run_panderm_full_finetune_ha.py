@@ -95,6 +95,11 @@ def parse_args():
         default=0.0,
         help="Label smoothing passed to the PanDerm training script. Keep 0.0 for clean baseline/HA comparison.",
     )
+    parser.add_argument("--feat-lambda", type=float, default=0.0)
+    parser.add_argument("--feat-rule", type=str, default="both", choices=["both", "single"])
+    parser.add_argument("--feat-batch-size", type=int, default=8)
+    parser.add_argument("--feat-val-csv", type=str, default="")
+    parser.add_argument("--fold", type=int, default=-1)
 
     return parser.parse_args()
 
@@ -169,8 +174,13 @@ def main():
         "--wandb_project", args.wandb_project,
         "--wandb_entity", args.wandb_entity,
         "--wandb_mode", args.wandb_mode,
+        "--feat_lambda", str(args.feat_lambda),
+        "--feat_rule", args.feat_rule,
+        "--feat_batch_size", str(args.feat_batch_size),
+        "--fold", str(args.fold),
     ])
-
+    if args.feat_val_csv:
+        cmd.extend(["--feat_val_csv", str(Path(args.feat_val_csv).resolve())])
     if args.weights:
         cmd.append("--weights")
     if args.eval_only:

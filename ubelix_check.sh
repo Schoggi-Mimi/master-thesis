@@ -7,9 +7,9 @@
 #
 # Overrides: QOS=... PART=... TYPES="h200 h100 rtx4090" ./tools/ubelix_check.sh
 
-QOS=${QOS:-job_gpu_caim}
-PART=${PART:-gpu-invest}
-TYPES=${TYPES:-"h200 h100 rtx4090"}
+QOS=${QOS:-job_gratis}
+PART=${PART:-gpu}
+TYPES=${TYPES:-"h100 rtx4090"}
 
 # ---------------------------------------------------------------- running ----
 printf '\n=== RUNNING (qos=%s) ===\n' "$QOS"
