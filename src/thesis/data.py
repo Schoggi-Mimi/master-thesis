@@ -3,6 +3,7 @@ import pandas as pd
 import torch
 import torchvision.transforms as T
 from PIL import Image
+from .config import rebase
 
 from src.eval.cam_eval_utils import (CAM_GRID, CROP_SIZE,
                                      mask_to_cam_grid_geom, transform_rgb)
@@ -52,6 +53,7 @@ def load_lesions(ev):
 def load_qc():
     q = pd.read_csv(QC_CSV).query("qc_pass").copy()
     q["Image_ID"] = _strip(q.Image_ID)
+    q["mask_path"] = q.mask_path.map(lambda p: str(rebase(p)))
     return q
 
 

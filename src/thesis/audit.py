@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 from sklearn.metrics import roc_auc_score
+from pathlib import Path
 
 from .cams import class_cams, finer_cam, target_ref
 from .config import MEL_IDX, NV_IDX, OUT
@@ -22,6 +23,9 @@ def run_audit(ev, lesion, hum, X_test, y_test, ids_test, qc, m_ha0, m_ha5):
         all(0 < v.sum() < v.size for v in lesion.values()), f"{len(lesion)}")
     chk("HUM has positives and negatives",
         all(0 < hum[i][lesion[i]].sum() < lesion[i].sum() for i in hum), f"{len(hum)}")
+
+    missing = [p for p in qc.mask_path if not Path(p).exists()]
+    chk("all annotation mask paths exist", not missing, f"{len(missing)} missing")
 
     iid = sorted(hum)[0]
     r = ev.loc[iid]

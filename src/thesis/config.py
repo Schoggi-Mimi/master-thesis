@@ -1,7 +1,7 @@
 from pathlib import Path
 import sys
 import torch
-
+import re
 
 def find_repo():
     for p in [Path.cwd(), *Path.cwd().parents]:
@@ -56,3 +56,33 @@ GROUP_COLOR = {
     "BLUE_WHITE": "#9467BD", "DOTS": "#D62728", "STREAKS": "#8C564B",
     "VASCULAR": "#17BECF", "UNASSIGNED": "#7F7F7F",
 }
+
+
+_TOP = {"data", "results", "outputs", "external", "notebooks", "scripts"}
+_INDEX = None
+
+
+def rebase(p):
+    """Map a path written on any machine (Mac, Windows, UBELIX) onto the current repo.
+    Splits on both separators, so it never depends on the OS that wrote the path."""
+    if p is None or (isinstance(p, float) and p != p):
+        return p
+    parts = [x for x in re.split(r"[\\/]+", str(p)) if x and not x.endswith(":")]
+    if REPO.name in parts:
+        i = len(parts) - 1 - parts[::-1].index(REPO.name)
+        out = REPO.joinpath(*parts[i + 1:])
+    else:
+        i = next((k for k, s in enumerate(parts) if s in _TOP), None)
+        out = REPO.joinpath(*(parts[i:] if i is not None else parts))
+    if out.exists():
+        return out
+    global _INDEX
+    if _INDEX is None:
+        _INDEX = {}
+        for f in (REPO / "data").rglob("*.png"):
+            _INDEX.setdefault(f.name, []).append(f)
+    hits = _INDEX.get(parts[-1], [])
+    if len(hits) == 1:
+        print(f"rebase fallback: {parts[-1]} -> {hits[0].relative_to(REPO)}")
+        return hits[0]
+    raise FileNotFoundError(f"{out} missing, {len(hits)} matches by name")
