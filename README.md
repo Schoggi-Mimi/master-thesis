@@ -4,7 +4,6 @@ This repository contains the code of my MSc thesis on explanation guided learnin
 
 Main finding: global alignment moves the maps onto the lesion, but the melanoma and nevus maps become nearly identical and no longer rank the cells the model relies on. Expert alignment and a blinded dermatologist study show that lesion level agreement alone does not give a differential explanation.
 
-
 ## Repository structure
 
 ```
@@ -41,23 +40,31 @@ Get PanDerm, check out the commit the patch was made against and apply the patch
 
 ```bash
 mkdir -p external
-git clone https://github.com/SiyuanYan1/PanDerm external/PanDerm      # [CHECK] URL
+git clone https://github.com/SiyuanYan1/PanDerm external/PanDerm
 git -C external/PanDerm checkout $(cat patches/PANDERM_COMMIT)
 git -C external/PanDerm apply ../../patches/panderm_classification.patch
 ```
 
 The patch adds the training script with the alignment losses (`classification/run_class_finetuning_ha.py`) and the changes it needs in the PanDerm model and data code. The analysis package imports from it, so this step is needed for training and for evaluation.
 
-Download the pretrained PanDerm Base weights from the PanDerm repository and place them at `external/weights/panderm_bb_data6_checkpoint-499.pth`, the path the training launcher uses. [CHECK] file name and download link in the PanDerm README.
+Download the pretrained PanDerm Base weights `panderm_bb_data6_checkpoint-499.pth` as described in the PanDerm README, and place them at `external/weights/panderm_bb_data6_checkpoint-499.pth`, the path the training launcher uses.
 
 ## Data
 
 HAM10000 is not distributed here. Download it yourself:
 
 - Images and metadata: Harvard Dataverse, https://doi.org/10.7910/DVN/DBW86T
-- Lesion segmentation masks (Tschandl): [CHECK] download link
+- Lesion segmentation masks: Kaggle, https://www.kaggle.com/datasets/tschandl/ham10000-lesion-segmentations
 
-Place the data under `data/HAM10000/`. The split files store image and mask paths relative to this folder. [CHECK] Name the image and mask subfolders as in the `image_rel_path` and `mask_rel_path` columns of `splits/ham_mel_nv_clean.csv`.
+Place the files like this. The split files store paths relative to `data/HAM10000/`:
+
+```
+data/
+├── HAM10000/
+│   ├── images/                                  ISIC_*.jpg
+│   └── mel_nv/                                  split files (see below)
+└── HAM10000_segmentations_lesion_tschandl/      ISIC_*_segmentation.png
+```
 
 Copy the split files to where the scripts read them:
 
@@ -72,11 +79,13 @@ cp splits/*.csv data/HAM10000/mel_nv/
 | `f2_fold0.csv` to `f2_fold4.csv` | training data of the five expert alignment folds |
 | `f2_fold0_heldout.csv` to `f2_fold4_heldout.csv` | the annotated images held out in each fold |
 
-The structure masks drawn by the dermatologist are not public. They are available from the author on request. Scripts that read them need these masks. [CHECK] These are `scripts/data/annotation_qc.py`, the expert alignment training and most of the analysis scripts.
+Paths stored in the annotation quality control file are mapped onto the local repository by `rebase()` in `src/thesis/config.py`, so files written on another machine resolve without editing.
+
+The structure masks drawn by the dermatologist are not public. They are available from the author on request, together with the structure masks used for expert alignment training. They are needed by `scripts/data/annotation_qc.py`, by the expert alignment training, and by every script in `scripts/eval`, `analysis`, `clinician` and `figures`. Without them, the global alignment models can be trained and evaluated for classification only.
 
 ## Reproducing the results
 
-Training ran on UBELIX, the HPC cluster of the University of Bern, with one NVIDIA H100 GPU per job. The launchers are SLURM scripts. Run them from `scripts/train/`, because they call `run_panderm_full_finetune_ha.sh` by its relative name.
+Training ran on UBELIX, the HPC cluster of the University of Bern, with one NVIDIA H100 GPU per job. One training run took less than an hour. The launchers are SLURM scripts. Run them from `scripts/train/`, because they call `run_panderm_full_finetune_ha.sh` by its relative name.
 
 ```bash
 cd scripts/train
@@ -89,13 +98,11 @@ bash run_dal_only_mean_sweep.sh             # class separation term without alig
 cd ../..
 ```
 
-Each training job has a wall time limit of 6 hours. [CHECK] actual run times.
-
-Evaluation and figures, run from the repository root in this order:
+The analysis scripts ran on a MacBook Pro with an M1 Pro chip and 16 GB memory. Run them from the repository root in this order:
 
 ```bash
 python scripts/data/prepare_split.py              # not needed, the split files are provided
-python scripts/data/annotation_qc.py              # needs the annotation masks
+python scripts/data/annotation_qc.py
 python scripts/eval/generate_eval_cams.py
 python scripts/eval/overlap_eval_cams.py
 python scripts/analysis/lesion_alignment.py
@@ -106,7 +113,7 @@ python scripts/figures/figures_tables.py
 python scripts/figures/final_figures_statistics.py
 ```
 
-Tables and figures are written to the output folders set in `src/thesis/config.py`. [CHECK] folder names. `final_figures_statistics.py` writes most figures of Chapters 3 and 4, the appendix tables and the statistics appendix. [CHECK] hardware used for the analysis scripts.
+Tables are written to `results/final/tables/`. Figures are written to `thesis/img/`, set by `FIG` in `src/thesis/config.py`. `final_figures_statistics.py` writes most figures of Chapters 3 and 4, the appendix tables and the statistics appendix.
 
 ## Model weights
 
