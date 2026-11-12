@@ -18,7 +18,7 @@ set -euo pipefail
 # nevus channel on the lesion, so anchors only added imbalance.
 # =============================================================================
 
-REPO_ROOT="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+REPO_ROOT="$(cd "$(dirname "$(readlink -f "$0")")/../.." && pwd)"
 WORKER="$REPO_ROOT/run_panderm_full_finetune_ha.sh"
 [[ -f "$WORKER" ]] || WORKER="$REPO_ROOT/scripts/run_panderm_full_finetune_ha.sh"
 [[ -f "$WORKER" ]] || { echo "worker script not found"; exit 1; }
