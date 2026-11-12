@@ -8,15 +8,21 @@ dependencies:
   - ipykernel
   - jupyterlab
   - matplotlib
-  - numpy[version='<2']
+  - numpy<2
   - pandas
   - pillow
   - scikit-learn
   - scipy
   - tqdm
-  - pytorch
+  - pytorch=2.2.2
   - torchaudio
-  - torchvision
+  - torchvision=0.17.2
   - ipywidgets
   - plotly
-prefix: /Users/choekyelnyungmartsang/opt/anaconda3/envs/thesis
+  - pip
+  - pip:
+      - timm==1.0.25
+      - wandb==0.28.0
+      - einops==0.8.2
+      - pymupdf==1.28.2
+      - opencv-python==4.13.0

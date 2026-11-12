@@ -68,3 +68,4 @@ config/local.env
 /src/models/
 /src/slides/
 /scripts/generate_finer_cam.py
+/scripts/_archive/
