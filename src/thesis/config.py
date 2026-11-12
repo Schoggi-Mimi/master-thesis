@@ -1,5 +1,6 @@
-from pathlib import Path
 import sys
+from pathlib import Path
+
 import torch
 
 
@@ -33,7 +34,10 @@ CK_F2 = REPO / "external" / "checkpoints_f2"
 
 OUT = REPO / "results" / "final"
 TAB = OUT / "tables"
-FIG = OUT / "figures"
+# FIG = OUT / "figures"
+FIG = REPO / "thesis" / "img"     # adjust to your LaTeX project path
+FIG.mkdir(parents=True, exist_ok=True)
+
 for d in (OUT, TAB, FIG):
     d.mkdir(parents=True, exist_ok=True)
 

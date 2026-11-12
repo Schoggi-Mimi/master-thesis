@@ -1,0 +1,22 @@
+name: thesis
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - python=3.11
+  - ipykernel
+  - jupyterlab
+  - matplotlib
+  - numpy[version='<2']
+  - pandas
+  - pillow
+  - scikit-learn
+  - scipy
+  - tqdm
+  - pytorch
+  - torchaudio
+  - torchvision
+  - ipywidgets
+  - plotly
+prefix: /Users/choekyelnyungmartsang/opt/anaconda3/envs/thesis

@@ -10,11 +10,25 @@ from .cams import norm01
 from .config import FIG, GROUP_COLOR
 
 TEXTWIDTH = 6.3          # inches, A4 10pt single column
-C_FOCUS = "#C62828"      # the result the reader should look at
-C_CONTROL = "#4D4D4D"    # the direct comparison
-C_CONTEXT = "#BDBDBD"    # shown for reference, de-emphasised
-C_REF = "#1F77B4"        # baselines and reference lines
+# C_FOCUS = "#C62828"      # the result the reader should look at
+# C_CONTROL = "#4D4D4D"    # the direct comparison
+# C_CONTEXT = "#BDBDBD"    # shown for reference, de-emphasised
+# C_REF = "#1F77B4"        # baselines and reference lines
 C_LESION = "#39FF14"
+# semantic palette (tab colours). Classes and models never share a colour.
+C_MEL, C_NV = "#d62728", "#1f77b4"                       # tab:red, tab:blue
+C_UNAL, C_GLOB, C_EXP = "#7f7f7f", "#ff7f0e", "#9467bd"  # tab:gray, tab:orange, tab:purple
+C_REF, C_CHANCE = "#8c564b", "#BDBDBD"                   # tab:brown, light grey
+C_CONTEXT = "#BDBDBD"
+MODEL_COLOR = {"unaligned": C_UNAL, "global aligned": C_GLOB, "expert aligned": C_EXP,
+               "control": C_REF, "darkness": C_REF, "random": C_CHANCE}
+CLASS_COLOR = {"MEL": C_MEL, "NV": C_NV}
+# legacy names, kept so old cells still run. Do not use in new figures.
+C_FOCUS, C_CONTROL = C_GLOB, "#4D4D4D"
+C_JOINT = "#bcbd22"                                   # tab:olive
+METHOD_COLOR = {"Grad-CAM": "#2ca02c", "FinerCAM 0.6": "#17becf",   # tab:green, tab:cyan
+                "Diff-CAM": "#e377c2", "random": C_CHANCE}          # tab:pink
+MODEL_COLOR.update({"global only": C_GLOB, "joint": C_JOINT, "expert only": C_EXP})
 
 mpl.rcParams.update({
     "figure.dpi": 130, "savefig.dpi": 300, "savefig.bbox": "tight",
@@ -87,7 +101,8 @@ def draw_top(ax, rgb, hot, color="#FF2D2D", alpha=0.40):
     outline(ax, hot, color, lw=1.1)
     ax.set_xticks([]); ax.set_yticks([])
 
-def draw_top_smooth(ax, rgb, cam, frac=0.10, color="#00E5FF", fill_alpha=0.12):
+def draw_top_smooth(ax, rgb, cam, frac=0.10, color="#00E5FF", fill_alpha=0.12,
+                    lw=1.8, line_alpha=1.0, halo_lw=3.6, halo_alpha=1.0):
     u = cv2.resize(norm01(cam), (CROP_SIZE, CROP_SIZE), interpolation=cv2.INTER_CUBIC)
     thr = np.quantile(u, 1 - frac)
     hot = (u >= thr).astype(float)
@@ -96,7 +111,9 @@ def draw_top_smooth(ax, rgb, cam, frac=0.10, color="#00E5FF", fill_alpha=0.12):
         ov = np.zeros((CROP_SIZE, CROP_SIZE, 4))
         ov[hot > .5] = [*mpl.colors.to_rgb(color), fill_alpha]
         ax.imshow(ov)
-    cs = ax.contour(hot, [.5], colors=[color], linewidths=1.8)
-    for c in cs.collections if hasattr(cs, "collections") else [cs]:
-        c.set_path_effects([pe.Stroke(linewidth=3.6, foreground="black"), pe.Normal()])
+    cs = ax.contour(hot, [.5], colors=[color], linewidths=lw, alpha=line_alpha)
+    if halo_lw > 0:
+        halo = [pe.Stroke(linewidth=halo_lw, foreground=(0, 0, 0, halo_alpha)), pe.Normal()]
+        for c in cs.collections if hasattr(cs, "collections") else [cs]:
+            c.set_path_effects(halo)
     ax.set_xticks([]); ax.set_yticks([])

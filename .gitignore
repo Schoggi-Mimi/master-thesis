@@ -440,3 +440,52 @@ figures/
 notebooks/mel_nv/notebook_audit_input.txt
 
 .venv
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+.venv/
+venv/
+
+# OS and editors
+.DS_Store
+.vscode/
+.idea/
+
+# Credentials and local settings
+*.env
+config/local.env
+.netrc
+
+# Data, weights, logs and regenerated outputs
+data/
+external/
+outputs/
+results/
+figures/
+checkpoints/
+logs/
+wandb/
+mlruns/
+*.pth
+*.pt
+*.ckpt
+*.h5
+*.pkl
+*.pickle
+*.npy
+*.npz
+
+# Notebooks stay local (converted to scripts/)
+notebooks/
+*.ipynb
+
+# Clinician study answer keys
+*KEY_do_not_send*
+
+# Old configs, scratch files and thesis sources
+configs/
+temp.txt
+thesis/

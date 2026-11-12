@@ -1,10 +1,11 @@
 import numpy as np
 import torch
 import torch.nn.functional as tF
+from run_class_finetuning_ha import (_unwrap_model,
+                                     build_attention_gradcam_map,
+                                     unpack_model_outputs)
 
 from .config import BLOCK, MEL_IDX, NV_IDX
-from run_class_finetuning_ha import (build_attention_gradcam_map, _unwrap_model,
-                                     unpack_model_outputs)
 
 
 def norm01(v):
@@ -60,3 +61,19 @@ def finer_cam(model, x, label, alpha=0.6):
         v = tF.relu((A[:, :, 0, 1:] * G[:, :, 0, 1:]).mean(1))
     base.clear_xai_state()
     return norm01(v[0].detach().float().cpu().numpy().reshape(h, w))
+
+def head_maps(model, x, label):
+    """Signed per-head contribution of the target class, before head mean and ReLU.
+    Shape (heads, h*w). ReLU of the head mean, min max normalised, equals target_ref."""
+    assert label in ("MEL", "NV"), label
+    ti = MEL_IDX if label == "MEL" else NV_IDX
+    with torch.enable_grad():
+        base, logits = _forward(model, x)
+        A = base.blocks[BLOCK].attn.last_attn
+        G = torch.autograd.grad(logits[0, ti], A)[0]
+    if bool(getattr(base, "use_mean_pooling", False)):
+        H = (A[:, :, 1:, 1:] * G[:, :, 1:, 1:]).sum(2)
+    else:
+        H = A[:, :, 0, 1:] * G[:, :, 0, 1:]
+    base.clear_xai_state()
+    return H[0].detach().float().cpu().numpy()

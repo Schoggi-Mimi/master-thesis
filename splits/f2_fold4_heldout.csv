@@ -1,0 +1,7 @@
+image_id,split,dx,binary_label,image_rel_path,mask_rel_path,feat_mel_rel_path,feat_nv_rel_path,has_feat,rule
+ISIC_0024756,test,mel,0.0,images/ISIC_0024756.jpg,../HAM10000_segmentations_lesion_tschandl/ISIC_0024756_segmentation.png,mel_nv/feature_masks/ISIC_0024756_mel.png,mel_nv/feature_masks/ISIC_0024756_nv.png,1,mel_only
+ISIC_0024886,test,mel,0.0,images/ISIC_0024886.jpg,../HAM10000_segmentations_lesion_tschandl/ISIC_0024886_segmentation.png,mel_nv/feature_masks/ISIC_0024886_mel.png,mel_nv/feature_masks/ISIC_0024886_nv.png,1,mel_only
+ISIC_0026491,test,nv,1.0,images/ISIC_0026491.jpg,../HAM10000_segmentations_lesion_tschandl/ISIC_0026491_segmentation.png,mel_nv/feature_masks/ISIC_0026491_mel.png,mel_nv/feature_masks/ISIC_0026491_nv.png,1,mel_on_nevus
+ISIC_0026584,test,nv,1.0,images/ISIC_0026584.jpg,../HAM10000_segmentations_lesion_tschandl/ISIC_0026584_segmentation.png,mel_nv/feature_masks/ISIC_0026584_mel.png,mel_nv/feature_masks/ISIC_0026584_nv.png,1,mel_on_nevus
+ISIC_0029869,test,nv,1.0,images/ISIC_0029869.jpg,../HAM10000_segmentations_lesion_tschandl/ISIC_0029869_segmentation.png,mel_nv/feature_masks/ISIC_0029869_mel.png,mel_nv/feature_masks/ISIC_0029869_nv.png,1,nv_only
+ISIC_0030798,test,mel,0.0,images/ISIC_0030798.jpg,../HAM10000_segmentations_lesion_tschandl/ISIC_0030798_segmentation.png,mel_nv/feature_masks/ISIC_0030798_mel.png,mel_nv/feature_masks/ISIC_0030798_nv.png,1,mel_only
